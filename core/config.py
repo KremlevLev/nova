@@ -32,3 +32,4 @@ SMART_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free" #very smart, but slow
 MODELS_LIST = [
     DEFAULT_MODEL, DEFAULT_MODEL_2, FALLBACK_MODEL
     ] #list of models to try in order
+SYSTEM_PROMPT = "Ты — Nova, минималистичный и эффективный ИИ-ассистент для ОС Windows."
