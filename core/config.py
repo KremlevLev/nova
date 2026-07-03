@@ -27,7 +27,8 @@ DEFAULT_MODEL_4 = "openai/gpt-oss-20b:free" #default model for general use
 CODE_MODEL = "poolside/laguna-m.1:free" #coding, math, reasoning
 FALLBACK_MODEL = "openrouter/free" #fallback model for when primary models are unavailable
 SMART_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free" #very smart, but slow
-
+#SMART_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+#SMART_MODEL = "openrouter/free"
 
 MODELS_LIST = [
     DEFAULT_MODEL, DEFAULT_MODEL_2, FALLBACK_MODEL
