@@ -45,5 +45,39 @@ NOVA_TOOLS = [
                 "required": ["text"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "change_volume",
+            "description": "Изменяет громкость системы. Вызывай, если человек просит сделать потише, погромче или выключить звук.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Действие со звуком: 'up' (громче), 'down' (тише) или 'mute' (выключить/включить)."
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_website",
+            "description": "Открывает веб-сайт или делает запрос в Google в браузере по умолчанию.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url_or_query": {
+                        "type": "string",
+                        "description": "Ссылка на сайт (например youtube.com) или текст для поиска (например 'рецепт пиццы')."
+                    }
+                },
+                "required": ["url_or_query"]
+            }
+        }
     }
 ]

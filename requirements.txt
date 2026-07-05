@@ -1,3 +1,4 @@
 tenacity
 pyperclip
 pyautogui
+semantic_router

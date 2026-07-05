@@ -2,8 +2,6 @@
 import asyncio
 import logging
 from typing import AsyncGenerator, Union
-
-import openai
 from openai import AsyncOpenAI
 from openai import (
     AuthenticationError,
@@ -14,7 +12,7 @@ from openai import (
     InternalServerError
 )
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
-
+from core.config import BASE_URL, OPENROUTER_API_KEY, SMART_MODEL, MODELS_LIST, SYSTEM_PROMPT
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 # Заменяем print на профессиональный логгер
 logger = logging.getLogger("NovaLLM")
@@ -24,8 +22,6 @@ if not logger.handlers:
     console_handler.setFormatter(logging.Formatter('[%(levelname)s] %(name)s: %(message)s'))
     logger.addHandler(console_handler)
 
-# --- ЗАГЛУШКИ КОНФИГА (Замените на ваши импорты) ---
-from core.config import BASE_URL, OPENROUTER_API_KEY, SMART_MODEL, debug, MODELS_LIST, SYSTEM_PROMPT
 BASE_URL = BASE_URL
 OPENROUTER_API_KEY = OPENROUTER_API_KEY
 MODELS_LIST = MODELS_LIST

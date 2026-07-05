@@ -7,6 +7,7 @@ debug=True
 # Считываем ключ OpenRouter
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 # Валидация: если забыли добавить ключ в .env, код сразу сообщит об этом
 if not OPENROUTER_API_KEY:
     raise ValueError(
@@ -16,6 +17,11 @@ if not OPENROUTER_API_KEY:
 if not TAVILY_API_KEY:
     raise ValueError(
         "Критическая ошибка: Переменная TAVILY_API_KEY не найдена в .env файле!\n"
+        "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
+    )
+if not HF_TOKEN:
+    raise ValueError(
+        "Критическая ошибка: Переменная HF_TOKEN не найдена в .env файле!\n"
         "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
     )
 # Сюда же можно добавлять любые другие настройки проекта
