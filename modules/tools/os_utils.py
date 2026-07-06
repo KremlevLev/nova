@@ -98,6 +98,11 @@ def execute_cmd_command(command: str) -> str:
         "спящий режим": "rundll32.exe powrprof.dll,SetSuspendState 0,1,0",
         "очистить корзину": "rd /s /q %systemdrive%\\$Recycle.bin"
     }
+    #добавить команды с human in thr loop, т.е опасные. по типу удаления чего либо
+    danger_commands = {
+        "удаление": " ",
+        "изменение файлов": " "
+    }
     
     cmd_to_run = allowed_commands.get(command.lower().strip())
     if cmd_to_run:
