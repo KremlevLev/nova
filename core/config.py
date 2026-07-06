@@ -10,29 +10,26 @@ TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 # Валидация: если забыли добавить ключ в .env, код сразу сообщит об этом
-if not OPENROUTER_API_KEY:
-    raise ValueError(
-        "Критическая ошибка: Переменная OPENROUTER_API_KEY не найдена в .env файле!\n"
-        "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
-    )
+if not GROQ_API_KEY and not OPENROUTER_API_KEY:
+    raise ValueError("Критическая ошибка: Ни GROQ_API_KEY, ни OPENROUTER_API_KEY не найдены в .env!")
 if not TAVILY_API_KEY:
-    raise ValueError(
-        "Критическая ошибка: Переменная TAVILY_API_KEY не найдена в .env файле!\n"
-        "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
-    )
-if not HF_TOKEN:
-    raise ValueError(
-        "Критическая ошибка: Переменная HF_TOKEN не найдена в .env файле!\n"
-        "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
-    )
-if not GROQ_API_KEY:
-    raise ValueError(
-        "Критическая ошибка: Переменная GROQ_API_KEY не найдена в .env файле!\n"
-        "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
-    )
+    raise ValueError("Критическая ошибка: Переменная TAVILY_API_KEY не найдена в .env!")
+
+# Настройка по умолчанию с приоритетом на сверхбыстрый Groq
+if GROQ_API_KEY:
+    BASE_URL = "https://api.groq.com/openai/v1"
+    DEFAULT_MODEL = "llama-3.1-8b-instant"
+    FALLBACK_MODEL = "llama-3.3-70b-versatile"
+    API_KEY = GROQ_API_KEY
+else:
+    BASE_URL = "https://openrouter.ai/api/v1"
+    DEFAULT_MODEL = "google/gemma-4-31b-it:free"
+    FALLBACK_MODEL = "openrouter/free"
+    API_KEY = OPENROUTER_API_KEY
 
 # Сюда же можно добавлять любые другие настройки проекта
-BASE_URL = "https://openrouter.ai/api/v1"
+#BASE_URL = "https://openrouter.ai/api/v1"
+BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MODEL = "google/gemma-4-31b-it:free" #default model for general use
 DEFAULT_MODEL_2 = "google/gemma-4-26b-a4b-it:free" #default model for general use
 DEFAULT_MODEL_3 = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" #default model for general use
@@ -42,7 +39,9 @@ FALLBACK_MODEL = "openrouter/free" #fallback model for when primary models are u
 SMART_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free" #very smart, but slow
 #SMART_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 #SMART_MODEL = "openrouter/free"
-
+LLAMA = "llama-3.1-8b-instant"
+GPT_OSS="openai/gpt-oss-20b"
+LLAMA_BEST = "meta-llama/llama-4-scout-17b-16e-instruct"
 MODELS_LIST = [
     DEFAULT_MODEL, DEFAULT_MODEL_2, FALLBACK_MODEL
     ] #list of models to try in order
