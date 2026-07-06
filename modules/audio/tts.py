@@ -4,30 +4,28 @@ import logging
 
 logger = logging.getLogger("TTS")
 
-def init_engine():
-    engine = pyttsx3.init()
-    
-    # Пытаемся найти русский голос в системе
-    voices = engine.getProperty('voices')
-    for voice in voices:
-        if 'ru' in voice.languages or 'Russian' in voice.name or 'Ирина' in voice.name or 'Pavel' in voice.name:
-            engine.setProperty('voice', voice.id)
-            break
-            
-    # Настройки голоса
-    engine.setProperty('rate', 180) # Скорость речи (по умолчанию обычно 200)
-    engine.setProperty('volume', 1.0) # Громкость (от 0 до 1)
-    
-    return engine
-
-# Инициализируем один раз при импорте
-engine = init_engine()
-
 def speak(text: str):
-    """Озвучивает переданный текст"""
+    """Озвучивает текст, безопасно создавая движок при каждом вызове (защита от зависаний)"""
     if not text:
         return
         
     print(f"\n[🔊 Nova Говорит]: {text}")
-    engine.say(text)
-    engine.runAndWait()
+    
+    try:
+        # pythoncom нужен, чтобы Windows не блокировал звук в асинхронных потоках
+        import pythoncom
+        pythoncom.CoInitialize() 
+        
+        engine = pyttsx3.init()
+        
+        voices = engine.getProperty('voices')
+        for voice in voices:
+            if 'ru' in voice.languages or 'Russian' in voice.name or 'Ирина' in voice.name or 'Pavel' in voice.name:
+                engine.setProperty('voice', voice.id)
+                break
+                
+        engine.setProperty('rate', 180)
+        engine.say(text)
+        engine.runAndWait()
+    except Exception as e:
+        logger.error(f"Ошибка голосового движка: {e}")

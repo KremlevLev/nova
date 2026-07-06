@@ -8,6 +8,7 @@ debug=True
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 # Валидация: если забыли добавить ключ в .env, код сразу сообщит об этом
 if not OPENROUTER_API_KEY:
     raise ValueError(
@@ -24,6 +25,12 @@ if not HF_TOKEN:
         "Критическая ошибка: Переменная HF_TOKEN не найдена в .env файле!\n"
         "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
     )
+if not GROQ_API_KEY:
+    raise ValueError(
+        "Критическая ошибка: Переменная GROQ_API_KEY не найдена в .env файле!\n"
+        "Пожалуйста, создайте файл .env и добавьте туда ваш ключ."
+    )
+
 # Сюда же можно добавлять любые другие настройки проекта
 BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "google/gemma-4-31b-it:free" #default model for general use

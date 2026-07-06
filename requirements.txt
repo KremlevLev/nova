@@ -6,4 +6,4 @@ pyttsx3
 sounddevice
 faster-whisper 
 SpeechRecognition 
-pyaudio
+PyAudio
