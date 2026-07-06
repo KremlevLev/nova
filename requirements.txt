@@ -2,3 +2,8 @@ tenacity
 pyperclip
 pyautogui
 semantic_router
+pyttsx3
+sounddevice
+faster-whisper 
+SpeechRecognition 
+pyaudio
