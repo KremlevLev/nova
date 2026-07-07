@@ -7,3 +7,6 @@ sounddevice
 faster-whisper 
 SpeechRecognition 
 PyAudio
+kokoro-onnx 
+sounddevice 
+soundfile
