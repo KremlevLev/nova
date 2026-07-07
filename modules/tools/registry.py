@@ -61,3 +61,60 @@ TOOL_REGISTRY = {
     "goodbye": [], 
     "chat": [], 
 }
+
+# Добавьте эти структуры в modules/tools/registry.py
+
+save_memory_tool = {
+    "type": "function",
+    "function": {
+        "name": "save_to_memory",
+        "description": "Запоминает важную информацию о пользователе (имена, предпочтения, факты), чтобы использовать в будущем.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Факт или информация для сохранения (например: 'Пользователь любит синий цвет')."}
+            },
+            "required": ["text"]
+        }
+    }
+}
+
+search_memory_tool = {
+    "type": "function",
+    "function": {
+        "name": "search_in_memory",
+        "description": "Ищет в долговременной памяти Nova информацию о пользователе по запросу.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Поисковый запрос для извлечения фактов."}
+            },
+            "required": ["query"]
+        }
+    }
+}
+
+add_reminder_tool = {
+    "type": "function",
+    "function": {
+        "name": "set_reminder",
+        "description": "Устанавливает напоминание или будильник на определенное время или интервал.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "time_str": {"type": "string", "description": "Время в формате '+минуты' (например '+15' для 15 минут) или в формате 'ЧЧ:ММ' (например '18:00')."},
+                "message": {"type": "string", "description": "Текст напоминания (например: 'купить хлеб')."}
+            },
+            "required": ["time_str", "message"]
+        }
+    }
+}
+
+list_reminders_tool = {
+    "type": "function",
+    "function": {
+        "name": "get_active_reminders",
+        "description": "Возвращает список всех активных на данный момент напоминаний.",
+        "parameters": {"type": "object", "properties": {}}
+    }
+}

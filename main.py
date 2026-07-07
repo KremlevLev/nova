@@ -17,6 +17,9 @@ from modules.tools.os_utils import (
 )
 from modules.audio.stt import VoiceListener
 from modules.audio.tts import speak
+from modules.brain.memory import LocalVectorMemory
+from modules.tools.tasks import TaskScheduler
+from modules.brain.router import encoder as shared_encoder
 
 AVAILABLE_FUNCTIONS = {
     "get_current_time": get_current_time,
@@ -73,6 +76,54 @@ def check_fast_commands(user_text: str) -> tuple[bool, str]:
             _, speech_text = action(match)
             return True, speech_text
     return False, ""
+
+# Создаем синглтоны
+memory_engine = LocalVectorMemory(encoder=shared_encoder)
+scheduler_engine = TaskScheduler()
+
+# Добавляем функции-обертки
+def save_to_memory(text: str) -> str:
+    memory_engine.add_document(text)
+    return "Информация успешно сохранена в долговременную память."
+
+def search_in_memory(query: str) -> str:
+    results = memory_engine.search(query, limit=3)
+    if not results:
+        return "В памяти ничего не найдено по этому запросу."
+    formatted = "Вот что я вспомнила:\n"
+    for r in results:
+        formatted += f"- {r['text']} (достоверность: {r['score']:.2f})\n"
+    return formatted
+
+def set_reminder(time_str: str, message: str) -> str:
+    return scheduler_engine.add_reminder(time_str, message)
+
+def get_active_reminders() -> str:
+    return scheduler_engine.list_reminders()
+
+# Регистрируем их в AVAILABLE_FUNCTIONS внутри main.py
+AVAILABLE_FUNCTIONS.update({
+    "save_to_memory": save_to_memory,
+    "search_in_memory": search_in_memory,
+    "set_reminder": set_reminder,
+    "get_active_reminders": get_active_reminders
+})
+
+# Добавьте эту асинхронную функцию в main.py:
+async def reminder_checker_worker():
+    """Фоновая задача, проверяющая и озвучивающая наступившие напоминания"""
+    while True:
+        try:
+            pending = scheduler_engine.get_pending_tasks()
+            for task in pending:
+                # Озвучиваем напоминание
+                speak(f"Внимание! Напоминаю: {task['message']}")
+                # Помечаем как выполненное
+                scheduler_engine.mark_completed(task["id"])
+        except Exception as e:
+            print(f"[Worker Error]: Ошибка проверки задач: {e}")
+            
+        await asyncio.sleep(10) # Проверяем каждые 10 секунд
 
 # --- УМНЫЙ XML/TEXT ФИЛЬТР И ДЕКОДЕР ---
 
@@ -367,4 +418,14 @@ async def main_loop():
             traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    # Запускаем две корутины параллельно
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        # main_loop() и checker работают в одном event-loop
+        loop.run_until_complete(asyncio.gather(
+            main_loop(),
+            reminder_checker_worker()
+        ))
+    except KeyboardInterrupt:
+        print("\nЗавершение работы ассистента.")
