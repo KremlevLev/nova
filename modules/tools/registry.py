@@ -1,3 +1,5 @@
+# modules/tools/registry.py
+
 open_app_tool = {"type": "function", "function": {"name": "open_application", "description": "Открывает программу (блокнот, калькулятор, проводник).", "parameters": {"type": "object", "properties": {"app_name": {"type": "string"}}, "required": ["app_name"]}}}
 close_app_tool = {"type": "function", "function": {"name": "close_application", "description": "Закрывает запущенную программу (блокнот, калькулятор, проводник, хром) по названию.", "parameters": {"type": "object", "properties": {"app_name": {"type": "string", "description": "Название закрываемого приложения (блокнот, калькулятор, проводник, хром)."}}, "required": ["app_name"]}}}
 type_text_tool = {"type": "function", "function": {"name": "type_text", "description": "Печатает текст в активное окно.", "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}}
@@ -44,25 +46,6 @@ configure_assistant_tool = {
         }
     }
 }
-
-TOOL_REGISTRY = {
-    "os_control": [open_app_tool, close_app_tool, type_text_tool, change_volume_tool, execute_cmd_tool],
-    "sys_stat_route": [get_time_tool, get_system_status_tool], 
-    "web_search": [open_website_tool, search_web_tavily_tool], 
-    "file_operations": [execute_cmd_tool, open_app_tool],
-    "media_control": [manage_media_tool, change_volume_tool],
-    "app_mng_route": [manage_windows_tool, close_app_tool, execute_cmd_tool],
-    "todo&note_route": [create_note_tool, get_time_tool],
-    "timer_alarm": [set_timer_tool, get_time_tool],
-    "code_assistant": [search_web_tavily_tool],
-    "calendar_route": [create_note_tool, get_time_tool], 
-    "smarthome_control": [control_smart_home_tool], 
-    "assistant_config": [configure_assistant_tool], 
-    "goodbye": [], 
-    "chat": [], 
-}
-
-# Добавьте эти структуры в modules/tools/registry.py
 
 save_memory_tool = {
     "type": "function",
@@ -118,3 +101,76 @@ list_reminders_tool = {
         "parameters": {"type": "object", "properties": {}}
     }
 }
+
+execute_python_tool = {
+    "type": "function",
+    "function": {
+        "name": "execute_python_code",
+        "description": "Запускает произвольный Python-код (REPL). Позволяет совершать сложные математические расчеты, работу с файлами, автоматизацию интерфейса через pyautogui и глубокое взаимодействие с ОС. Требует подтверждения пользователя.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Полный исполняемый код Python для запуска."}
+            },
+            "required": ["code"]
+        }
+    }
+}
+
+mouse_click_tool = {
+    "type": "function",
+    "function": {
+        "name": "mouse_click",
+        "description": "Перемещает курсор мыши на координаты X, Y и совершает клик. Используется для точного нажатия кнопок на экране.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "integer", "description": "Координата X на экране (в пикселях)."},
+                "y": {"type": "integer", "description": "Координата Y на экране (в пикселях)."},
+                "click_type": {"type": "string", "enum": ["single", "double", "right"], "description": "Тип нажатия (single - обычный, double - двойной, right - правый)."}
+            },
+            "required": ["x", "y"]
+        }
+    }
+}
+
+press_hotkey_tool = {
+    "type": "function",
+    "function": {
+        "name": "press_keyboard_combination",
+        "description": "Нажимает заданную комбинацию клавиш (например, 'ctrl+n' для создания нового файла, 'ctrl+s' для сохранения, 'enter' для подтверждения, 'tab'). Используйте перед вводом текста в редакторы, чтобы создать документ.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keys": {"type": "string", "description": "Комбинация клавиш в нижнем регистре через знак плюс, например: 'ctrl+n' или 'enter'"}
+            },
+            "required": ["keys"]
+        }
+    }
+}
+
+# Единый плоский список всех инструментов для Nova
+ALL_TOOLS = [
+    open_app_tool, 
+    close_app_tool, 
+    type_text_tool, 
+    get_time_tool, 
+    change_volume_tool, 
+    open_website_tool, 
+    get_system_status_tool, 
+    search_web_tavily_tool, 
+    execute_cmd_tool, 
+    manage_media_tool, 
+    manage_windows_tool, 
+    create_note_tool, 
+    set_timer_tool, 
+    control_smart_home_tool, 
+    configure_assistant_tool, 
+    save_memory_tool, 
+    search_memory_tool, 
+    add_reminder_tool, 
+    list_reminders_tool, 
+    execute_python_tool, 
+    mouse_click_tool, 
+    press_hotkey_tool
+]

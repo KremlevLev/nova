@@ -16,6 +16,11 @@ CLOSE_VERBS = [
 
 # Быстрый Regex Bypass (время, системная громкость, окна)
 FAST_COMMAND_PATTERNS = [
+    # 1. Изменение громкости на конкретное число (например, "звук на 40", "громкость 80")
+    (re.compile(r'\b(?:установи|сделай|поставь)?\s*(?:громкость|звук)\s*(?:на\s+)?(\d+)\b', re.IGNORECASE),
+     lambda m: (change_volume(m.group(1)), f"Громкость установлена на {m.group(1)}%.")),
+     
+    # 2. Относительное изменение громкости
     (re.compile(r'\b(сделай|убавь|потише|тише|уменьши громкость)\b', re.IGNORECASE), 
      lambda m: (change_volume("down"), "Громкость уменьшена.")),
     (re.compile(r'\b(громче|прибавь|сделай громче|увеличь громкость)\b', re.IGNORECASE), 
@@ -23,9 +28,11 @@ FAST_COMMAND_PATTERNS = [
     (re.compile(r'\b(выключи звук|включи звук|муте|мьют)\b', re.IGNORECASE), 
      lambda m: (change_volume("mute"), "Состояние звука изменено.")),
      
+    # 3. Точное время
     (re.compile(r'\b(сколько времени|который час|время|точное время)\b', re.IGNORECASE), 
      lambda m: (None, get_current_time())),
      
+    # 4. Управление окнами
     (re.compile(r'\bсверни\s+(все\s+)?окна\b', re.IGNORECASE), 
      lambda m: (manage_windows("minimize_all"), "Сворачиваю окна.")),
     (re.compile(r'\bзакрыв(ай|аем|ить)\s+окно\b', re.IGNORECASE), 

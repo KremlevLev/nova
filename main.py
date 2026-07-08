@@ -3,42 +3,52 @@ import asyncio
 import json
 import traceback
 import re
-import winsound  # Встроенная библиотека для системного звука
-import keyboard  # Библиотека для глобальных хоткеев
+import winsound  
+import keyboard  
 from core.config import BASE_URL, DEFAULT_MODEL, SYSTEM_PROMPT
 from modules.audio.tts import stop_speaking, reset_interrupt_flag
 try:
     from core.config import LLAMA_BEST
 except ImportError:
     LLAMA_BEST = DEFAULT_MODEL
-
+from modules.tools.executor import execute_python_code, mouse_click
 from modules.brain.llm import NovaLLM, extract_xml_tool_calls
-from modules.brain.router import get_intent
-from modules.tools.registry import TOOL_REGISTRY
+from modules.tools.registry import ALL_TOOLS  # Импортируем плоский список инструментов
 from modules.tools.os_utils import (
     get_current_time, open_application, close_application, type_text, 
     change_volume, open_website, execute_cmd_command, 
     get_system_status, search_web_tavily,
     manage_media, manage_windows, create_quick_note, set_timer,
-    control_smart_home, configure_assistant, take_screenshot, encode_image_base64
+    control_smart_home, configure_assistant, take_screenshot, encode_image_base64,
+    press_keyboard_combination
 )
+
 from modules.audio.stt import VoiceListener
 from modules.audio.tts import (
     speak, speak_worker, clean_text_for_speech, 
     is_text_code_or_json, is_inside_xml_block
 )
+import sys
+import socket
 
-# Подключение локальных движков памяти, задач и индексатора
-from modules.brain.memory import LocalVectorMemory
+# Подключение локальной BM25 памяти, задач и индексатора
+from modules.brain.memory import LocalMemory
 from modules.tools.tasks import TaskScheduler, reminder_checker_worker
 from modules.tools.app_indexer import WindowsAppIndexer
-from modules.brain.router import encoder as shared_encoder
 
 # Подключение перехватчиков (Bypasses)
 from modules.brain.bypass import check_instant_app_launch, check_instant_app_close, check_fast_commands
 
+# Однопоточный сокет-замок от дубликатов процессов
+try:
+    _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    _instance_lock.bind(('127.0.0.1', 29485))
+except OSError:
+    print("\n[⚠️ КРИТИЧЕСКАЯ ОШИБКА]: Ассистент Nova уже запущен в другом окне!")
+    sys.exit(1)
+
 # --- ИНИЦИАЛИЗАЦИЯ ДВИЖКОВ (СИНГЛТОНЫ) ---
-memory_engine = LocalVectorMemory(encoder=shared_encoder)
+memory_engine = LocalMemory()  # Инициализация чистой BM25 памяти без весов
 scheduler_engine = TaskScheduler()
 app_launcher = WindowsAppIndexer()
 
@@ -60,48 +70,59 @@ AVAILABLE_FUNCTIONS = {
     "control_smart_home": control_smart_home,
     "configure_assistant": configure_assistant,
     
-    # Регистрация памяти и задач в LLM
     "save_to_memory": lambda text: memory_engine.add_document(text) or "Запомнила.",
     "search_in_memory": lambda query: "\n".join([f"- {r['text']}" for r in memory_engine.search(query)]) or "Ничего не найдено.",
     "set_reminder": lambda time_str, message: scheduler_engine.add_reminder(time_str, message),
-    "get_active_reminders": lambda: scheduler_engine.list_reminders()
+    "get_active_reminders": lambda: scheduler_engine.list_reminders(),
+    
+    "execute_python_code": execute_python_code,
+    "mouse_click": mouse_click,
+    "press_keyboard_combination": press_keyboard_combination
 }
 
-# Назначаем глобальные клавиши "стоп"
-# Клавиша ESC остановит Nova, даже если вы свернули терминал
 keyboard.add_hotkey("esc", stop_speaking)
 keyboard.add_hotkey("ctrl+shift+q", stop_speaking)
+
+def should_pass_tools(request: str) -> bool:
+    """Определяет, нужно ли передавать инструменты для оптимизации контекста коротких фраз"""
+    clean = request.lower().strip().rstrip(".!?")
+    # Простые фразы общения и вежливости не требуют загрузки описаний функций
+    chat_phrases = {"привет", "пока", "как дела", "что делаешь", "спасибо", "круто", "отлично", "ясно", "понятно", "хаха"}
+    if clean in chat_phrases or len(clean.split()) <= 1:
+        return False
+    return True
 
 # --- ГЛАВНЫЙ ЦИКЛ ОРКЕСТРАЦИИ (MAIN LOOP) ---
 
 async def main_loop():
     bot = NovaLLM(model=LLAMA_BEST)
     listener = VoiceListener()
+    
     # === ЗАПУСК ВИЗУАЛЬНОГО ОВЕРЛЕЯ ===
     from modules.ui.overlay import start_overlay, update_status
     start_overlay()
-    update_status("СПИТ")  # Устанавливаем начальный статус
-    # Настройка асинхронного события для активации
+    update_status("СПИТ")  
+    
     loop = asyncio.get_running_loop()
     activation_event = asyncio.Event()
-    
-    is_active = False  # По умолчанию Nova спит. True — слушает непрерывно.
+    is_active = False  
     HOTKEY = "ctrl+shift+space"
     
     def toggle_nova():
         nonlocal is_active
         is_active = not is_active
         if is_active:
-            winsound.Beep(1200, 150)  # Высокий бип — проснулась
+            winsound.Beep(1200, 150)  
             print("\n[🎙️] Нова АКТИВИРОВАНА. Непрерывный слух включен...")
             update_status("СЛУШАЕТ") 
             loop.call_soon_threadsafe(activation_event.set)
         else:
-            winsound.Beep(600, 150)   # Низкий бип — заснула
+            winsound.Beep(600, 150)   
             print(f"\n[💤] Нова уснула. Нажмите {HOTKEY.upper()} для пробуждения...")
             update_status("СПИТ")
-            # --- СЖАТИЕ ИСТОРИИ (ОЧИСТКА ОТ BASE64) ---
-            # Перебираем историю и заменяем тяжелые списки с картинками на чистый текст
+            from modules.audio.tts import stop_speaking
+            stop_speaking()
+            
             for msg in bot.history:
                 content = msg.get("content")
                 if isinstance(content, list):
@@ -122,19 +143,23 @@ async def main_loop():
                 await activation_event.wait()
                 activation_event.clear()
                 if not is_active:
-                    continue  # Предохранитель от ложных вызовов
+                    continue  
             
-            user_request = listener.listen()
+            reset_interrupt_flag()  
+            update_status("СЛУШАЕТ")
+            
+            user_request = listener.listen(should_abort=lambda: not is_active)
+            
+            if not is_active:
+                continue
             if not user_request:
                 continue
-            # СБРОС ФЛАГА: Nova начинает новый ответ, прошлые прерывания не должны мешать
-            reset_interrupt_flag()
+
             if "отключайся" in user_request.lower() or "выключись" in user_request.lower():
                 speak("Отключаю питание. До встречи.")
                 keyboard.unhook_all()
                 break
 
-            # Перевод ассистента в сон голосом
             if "усни" in user_request.lower() or "спи" in user_request.lower():
                 speak("Ухожу в спящий режим. Зовите, когда понадоблюсь.")
                 winsound.Beep(600, 150)
@@ -147,7 +172,7 @@ async def main_loop():
             if is_launch:
                 print(f"[⚡ Instant App Launch Match]: {launch_speech}")
                 speak(launch_speech)
-                print(f"\n[💤] Снова в режиме сна. Нажмите {HOTKEY.upper()} для вызова...")
+                update_status("СЛУШАЕТ")
                 continue
 
             # 0.Б. МГНОВЕННОЕ ЗАКРЫТИЕ ПО (ZERO-LLM BYPASS)
@@ -155,7 +180,7 @@ async def main_loop():
             if is_close:
                 print(f"[⚡ Instant App Close Match]: {close_speech}")
                 speak(close_speech)
-                print(f"\n[💤] Снова в режиме сна. Нажмите {HOTKEY.upper()} для вызова...")
+                update_status("СЛУШАЕТ")
                 continue
 
             # 1. Быстрый Bypass по регулярным выражениям (звук, время, окна)
@@ -163,36 +188,26 @@ async def main_loop():
             if is_fast:
                 print(f"[⚡ Regex Bypass Match]: {fast_response}")
                 speak(fast_response)
-                print(f"\n[💤] Снова в режиме сна. Нажмите {HOTKEY.upper()} для вызова...")
+                update_status("СЛУШАЕТ")
                 continue
 
             # 2. Основной агентный цикл
-            intents = get_intent(user_request)
-            primary_intent = intents[0]
-            
-            # Собираем инструменты выбранной категории
-            active_tools = list(TOOL_REGISTRY.get(primary_intent, []))
-            
-            # ЗАЩИТА ОТ ГОЛОДАНИЯ МОДЕЛИ (Tool Starvation Protection):
-            if primary_intent not in ["chat", "goodbye"]:
-                for tool in TOOL_REGISTRY.get("os_control", []):
-                    if tool not in active_tools:
-                        active_tools.append(tool)
-            # Переводим в режим размышлений
             update_status("ДУМАЕТ")
-            print(f"\n[🧠 Роутер]: Выбрана категория '{primary_intent.upper()}'. Всего передано инструментов LLM: {len(active_tools)}")
-
-            bot.history.append({"role": "user", "content": user_request})
+            
+            # Решаем, нужно ли грузить инструменты
+            use_tools = should_pass_tools(user_request)
+            print(f"\n[🧠 Мозг]: Режим обработки: {'Агент с инструментами' if use_tools else 'Простой чат'}")
 
             # --- CV ДЕТЕКТОР ЭКРАНА ---
             image_path = None
-            # Если пользователь спрашивает про экран, картинку или просит посмотреть на что-то
-            vision_triggers = ["на экране", "экран", "посмотри", "что это", "видишь", "исправь", "что тут"]
+            vision_triggers = ["на экране", "экран", "посмотри", "что это", "видишь", "исправь", "что тут", "изображено"]
+
             if any(trigger in user_request.lower() for trigger in vision_triggers):
-                print("[📸] Обнаружен CV-запрос. Делаю снимок экрана...")
-                image_path = take_screenshot()
+                active_window_triggers = ["окно", "активное", "программу", "программа", "вкладка", "вкладку"]
+                capture_active = any(trigger in user_request.lower() for trigger in active_window_triggers)
+                print(f"[📸] Обнаружен CV-запрос (Режим окна: {capture_active}). Делаю снимок...")
+                image_path = take_screenshot(active_only=capture_active)
                 
-            # Формируем мультимодальный контент, если скриншот успешно сделан
             if image_path:
                 base64_image = encode_image_base64(image_path)
                 user_msg_content = [
@@ -208,7 +223,6 @@ async def main_loop():
             else:
                 user_msg_content = user_request
 
-            # Добавляем структурированный запрос в историю
             bot.history.append({"role": "user", "content": user_msg_content})
 
             for step in range(3):
@@ -220,8 +234,8 @@ async def main_loop():
                     "messages": messages,
                     "stream": True,
                 }
-                if active_tools:
-                    kwargs["tools"] = active_tools
+                if use_tools:
+                    kwargs["tools"] = ALL_TOOLS
                 if "openrouter" in BASE_URL:
                     kwargs["extra_body"] = {"models": bot._fallback_array}
 

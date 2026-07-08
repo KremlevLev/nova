@@ -27,17 +27,15 @@ class VoiceListener:
         self.block_size = 2048
         self.silence_duration = 1.2  # Время ожидания тишины перед отправкой
         self.energy_threshold = None  # Базовое значение порога
-        logger.info("Система аудиозахвата готова. Инференс: Groq API (whisper-large-v3-turbo)")
+        logger.info("Система аудиозахвата готова. Инференс: Groq API (whisper-large-v3)")
 
     def _get_rms(self, data):
         return np.sqrt(np.mean(np.square(data.astype(np.float32) / 32768.0)))
 
-    def listen(self) -> str:
+    def listen(self, should_abort=None) -> str:
         with sd.InputStream(samplerate=self.sample_rate, channels=1, blocksize=self.block_size, dtype='int16') as stream:
             
-            # ОТКАЗОУСТОЙЧИВАЯ КАЛИБРОВКА:
-            # Проверяем наличие атрибута через hasattr. Даже если конструктор закэшировался старый,
-            # этот блок сам обнаружит отсутствие переменной, откалибрует фон и создаст её.
+            # ОТКАЗОУСТОЙЧИВАЯ ОДНОКРАТНАЯ КАЛИБРОВКА:
             if not hasattr(self, 'energy_threshold') or self.energy_threshold is None:
                 print("\n[🎤] Калибровка фона (выполняется один раз при запуске)...")
                 bg_rms_list = []
@@ -50,7 +48,6 @@ class VoiceListener:
                     self.energy_threshold = 0.012
                 print(f"[🎤] Калибровка завершена. Базовый порог RMS VAD: {self.energy_threshold:.4f}")
             
-            # Во всех последующих циклах сразу переходим к прослушиванию
             print(f"[🎤] Слушаю (порог RMS VAD: {self.energy_threshold:.4f})...")
             audio_buffer = []
             started_speaking = False
@@ -59,6 +56,11 @@ class VoiceListener:
             active_blocks_count = 0  
             
             while True:
+                # МГНОВЕННЫЙ ВЫХОД: если хоткей перевел ассистента в сон, закрываем поток за 128мс
+                if should_abort and should_abort():
+                    logger.debug("[STT] Запись остановлена: ассистент переведен в режим сна.")
+                    return ""
+                
                 data, overflow = stream.read(self.block_size)
                 rms = self._get_rms(data)
                 
@@ -74,11 +76,14 @@ class VoiceListener:
                         break
                 else:
                     audio_buffer.append(data)
-                    # Пред-буфер в полсекунды для мягкого захвата начала фразы
                     if len(audio_buffer) > int((0.5 * self.sample_rate) / self.block_size):
                         audio_buffer.pop(0)
 
-        # ЛОКАЛЬНАЯ ФИЛЬТРАЦИЯ ШУМОВЫХ ВСПЛЕСКОВ:
+        # Дополнительная проверка на случай, если прерывание произошло на выходе из контекста
+        if should_abort and should_abort():
+            return ""
+
+        # ЛОКАЛЬНАЯ ФИЛЬТРАЦИЯ ШУМОВЫХ ВСПЛЕСКОВ (<256 мс)
         if active_blocks_count < 2:
             logger.debug(f"[STT Skip] Отклонен короткий шум ({active_blocks_count} блоков VAD).")
             return ""
@@ -103,17 +108,16 @@ class VoiceListener:
                 data = {
                     "model": "whisper-large-v3-turbo", 
                     "language": "ru",
-                    "temperature": "0.0"  # СТРОГИЙ ДЕКОДЕР
+                    "temperature": "0.0"
                 }
                 response = requests.post(url, headers=headers, files=files, data=data, timeout=8.0)
             
             if response.status_code == 200:
                 text = response.json().get("text", "").strip()
                 if text:
-                    # ПОСТ-ФИЛЬТР ТЕКСТОВЫХ ГАЛЛЮЦИНАЦИЙ:
                     clean_text = text.lower().strip().rstrip(".!?")
                     if clean_text in WHISPER_HALLUCINATIONS:
-                        logger.debug(f"[STT] Перехвачена и отсечена галлюцинация Whisper: '{text}'")
+                        logger.debug(f"[STT] Отсечена галлюцинация Whisper: '{text}'")
                         return ""
                     
                     print(f"[Вы сказали]: {text}")

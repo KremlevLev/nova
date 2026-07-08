@@ -7,7 +7,6 @@ pyautogui>=0.9.54
 pyperclip>=1.1.0
 python-dotenv>=1.0.0
 requests>=2.31.0
-semantic_router>=0.1.0
 sounddevice>=0.4.6
 soundfile>=0.12.0
 tenacity>=8.0.0

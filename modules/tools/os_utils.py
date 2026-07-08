@@ -1,3 +1,4 @@
+# modules/tools/os_utils.py
 import datetime
 import subprocess
 import logging
@@ -8,37 +9,109 @@ import webbrowser
 import os
 import psutil
 import requests
-from core.config import TAVILY_API_KEY
 import ctypes
 import base64
 from PIL import ImageGrab
+from core.config import TAVILY_API_KEY
 
 logger = logging.getLogger("Tools")
+
+# Включаем DPI Awareness, чтобы координаты окон не искажались при масштабировании интерфейса (125%, 150% и т.д.)
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ('left', ctypes.c_long),
+        ('top', ctypes.c_long),
+        ('right', ctypes.c_long),
+        ('bottom', ctypes.c_long)
+    ]
 
 def get_current_time() -> str:
     now = datetime.datetime.now()
     return now.strftime("Сегодня %d.%m.%Y, точное время %H:%M:%S")
 
+def get_active_window_rect() -> tuple[int, int, int, int] | None:
+    """Определяет границы активного в данный момент окна Windows"""
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if hwnd:
+            rect = RECT()
+            if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                # Игнорируем слишком маленькие окна или системный фон
+                if w > 100 and h > 100:
+                    return (rect.left, rect.top, rect.right, rect.bottom)
+    except Exception as e:
+        logger.error(f"Не удалось получить координаты активного окна: {e}")
+    return None
+
+def take_screenshot(active_only: bool = False) -> str:
+    """
+    Делает снимок экрана.
+    Если active_only=True — пытается снять только активное окно.
+    Если active_only=False или произошел сбой — делает полный снимок рабочего стола.
+    """
+    try:
+        os.makedirs("data/temp", exist_ok=True)
+        path = "data/temp/screenshot.png"
+        
+        bbox = None
+        if active_only:
+            bbox = get_active_window_rect()
+            
+        if bbox:
+            screenshot = ImageGrab.grab(bbox=bbox)
+            logger.info(f"Сделан скриншот активного окна: {bbox}")
+        else:
+            screenshot = ImageGrab.grab()
+            logger.info("Сделан скриншот всего экрана.")
+            
+        screenshot.save(path, "PNG")
+        return path
+    except Exception as e:
+        logger.error(f"Не удалось сделать скриншот: {e}")
+        return ""
 
 def close_application(app_name: str) -> str:
-    """Закрывает запущенное приложение по его имени в системе"""
-    app_name = app_name.lower().strip()
+    """Закрывает запущенное приложение по его имени в системе с поддержкой русскоязычных алиасов"""
+    app_name_clean = app_name.lower().strip()
+    
+    # 1. Пытаемся импортировать общий словарь синонимов для сопоставления
+    try:
+        from modules.tools.app_indexer import RUSSIAN_ALIASES
+        resolved_name = RUSSIAN_ALIASES.get(app_name_clean, app_name_clean)
+    except Exception:
+        resolved_name = app_name_clean
+        
+    # 2. Локальная карта сопоставлений для закрытия процессов
     apps = {
-        "блокнот": "notepad.exe", 
-        "калькулятор": "calc.exe", 
-        "проводник": "explorer.exe",
-        "хром": "chrome.exe",
-        "браузер": "browser.exe"
+        "блокнот": "notepad", "notepad": "notepad",
+        "калькулятор": "calc", "calculator": "calc",
+        "проводник": "explorer", "explorer": "explorer",
+        "хром": "chrome", "chrome": "chrome", "браузер": "chrome",
+        "обсидиан": "obsidian", "obsidian": "obsidian",
+        "телеграм": "telegram", "telegram": "telegram",
+        "дискорд": "discord", "discord": "discord",
+        "вс код": "code", "vs code": "code", "код": "code"
     }
-    process_name = apps.get(app_name, app_name)
+    
+    process_name = apps.get(resolved_name, resolved_name)
     if not process_name.endswith(".exe"):
         process_name += ".exe"
         
     closed = False
-    # 1. Сначала пытаемся мягко закрыть процесс через psutil
+    # Мягкое закрытие через psutil
     for proc in psutil.process_iter(['name']):
         try:
-            if proc.info['name'] and proc.info['name'].lower() == process_name:
+            if proc.info['name'] and proc.info['name'].lower() == process_name.lower():
                 proc.kill()
                 closed = True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -48,30 +121,53 @@ def close_application(app_name: str) -> str:
         logger.info(f"Приложение {app_name} ({process_name}) успешно закрыто.")
         return f"Приложение '{app_name}' успешно закрыто."
     else:
-        # 2. Если не получилось, пробуем системный вызов taskkill
+        # Резервный системный вызов taskkill
         try:
             result = subprocess.run(["taskkill", "/f", "/im", process_name], capture_output=True, text=True)
             if result.returncode == 0:
                 logger.info(f"Приложение {app_name} закрыто через taskkill.")
-                return f"Приложение '{app_name}' закрыто."
+                return f"Приложение '{app_name}' успешно закрыто."
         except Exception:
             pass
         return f"Приложение '{app_name}' не найдено среди активных процессов."
 
-
 def change_volume(action: str) -> str:
-    action = action.lower().strip()
-    if action in ["mute", "unmute", "выключить", "включить"]:
+    """
+    Регулирует системную громкость.
+    Принимает значения: 'up', 'down', 'mute' или конкретные цифры от '0' до '100'.
+    """
+    action_clean = str(action).lower().strip()
+    
+    if action_clean in ["mute", "unmute", "выключить", "включить"]:
         pyautogui.press("volumemute")
         return "Звук переключен."
-    elif action in ["up", "громче", "увеличить"]:
+    elif action_clean in ["up", "громче", "увеличить"]:
         for _ in range(5): 
             pyautogui.press("volumeup")
         return "Громкость увеличена."
-    elif action in ["down", "тише", "уменьшить"]:
+    elif action_clean in ["down", "тише", "уменьшить"]:
         for _ in range(5): 
             pyautogui.press("volumedown")
         return "Громкость уменьшена."
+        
+    # Обработка установки точного значения (например, "50")
+    try:
+        target_level = int(action_clean)
+        target_level = max(0, min(100, target_level))
+        
+        # Сбрасываем громкость в 0 (каждое нажатие уменьшает на 2%, 50 нажатий гарантируют минимум)
+        for _ in range(50):
+            pyautogui.press('volumedown')
+            
+        # Поднимаем громкость до нужного шага (каждое нажатие volumeup поднимает на 2%)
+        steps = target_level // 2
+        for _ in range(steps):
+            pyautogui.press('volumeup')
+            
+        return f"Громкость установлена на {target_level}%."
+    except ValueError:
+        pass
+        
     return "Ошибка: Неизвестная команда для звука."
 
 def open_website(url_or_query: str) -> str:
@@ -179,7 +275,7 @@ def manage_windows(action: str) -> str:
 
 def create_quick_note(text: str) -> str:
     try:
-        desktop = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop')
+        desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
         note_path = os.path.join(desktop, "Джарвис_Заметки.txt")
         with open(note_path, "a", encoding="utf-8") as f:
             f.write(f"[{get_current_time()}] {text}\n")
@@ -208,11 +304,9 @@ def configure_assistant(setting: str, value: str) -> str:
     return f"Настройка '{setting}' успешно изменена на значение '{value}'."
 
 def bring_window_to_front(app_name: str) -> bool:
-    """Находит окно запущенного приложения и принудительно выводит его на передний план (фокус)"""
     try:
         user32 = ctypes.windll.user32
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        
         found_hwnds = []
 
         def enum_windows_callback(hwnd, lParam):
@@ -223,7 +317,6 @@ def bring_window_to_front(app_name: str) -> bool:
                     user32.GetWindowTextW(hwnd, buffer, length + 1)
                     title = buffer.value.lower()
                     
-                    # Маппинг русско-английских названий окон
                     aliases = {
                         "блокнот": ["блокнот", "notepad"],
                         "калькулятор": ["калькулятор", "calc", "calculator"],
@@ -240,8 +333,8 @@ def bring_window_to_front(app_name: str) -> bool:
         
         if found_hwnds:
             hwnd = found_hwnds[0]
-            user32.ShowWindow(hwnd, 9)  # 9 = SW_RESTORE (развернуть окно, если оно свернуто)
-            user32.SetForegroundWindow(hwnd)  # Активировать фокус окна
+            user32.ShowWindow(hwnd, 9)
+            user32.SetForegroundWindow(hwnd)
             return True
     except Exception as e:
         logger.error(f"Ошибка фокусировки окна {app_name}: {e}")
@@ -255,46 +348,56 @@ def open_application(app_name: str) -> str:
         return f"Ошибка: Я пока не знаю, как открыть приложение '{app_name}'."
     try:
         subprocess.Popen(executable)
-        # Ждем 0.5 сек, чтобы Windows успела создать процесс и окно, затем наводим фокус
         time.sleep(0.5)
         bring_window_to_front(app_name)
         return f"Приложение {app_name} успешно открыто."
     except Exception as e:
         return f"Произошла ошибка при запуске: {e}"
 
-def type_text(text: str) -> str:
-    try:
-        # Небольшая пауза, чтобы активное окно успело среагировать на фокус
-        time.sleep(0.5)
-        old_clipboard = pyperclip.paste()
-        pyperclip.copy(text)
-        pyautogui.hotkey('ctrl', 'v')
-        time.sleep(0.1)
-        pyperclip.copy(old_clipboard)
-        return "Текст успешно напечатан в активном окне."
-    except Exception as e:
-        return f"Не удалось напечатать текст: {e}"
-    
-def take_screenshot() -> str:
-    """Делает снимок всего экрана и сохраняет его во временную папку.
-    Возвращает путь к файлу или пустую строку при ошибке."""
-    try:
-        os.makedirs("data/temp", exist_ok=True)
-        path = "data/temp/screenshot.png"
-        
-        # Делаем снимок и сохраняем в PNG
-        screenshot = ImageGrab.grab()
-        screenshot.save(path, "PNG")
-        return path
-    except Exception as e:
-        logger.error(f"Не удалось сделать скриншот: {e}")
-        return ""
-
 def encode_image_base64(image_path: str) -> str:
-    """Кодирует изображение в строку Base64 для передачи в LLM API"""
     try:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
         logger.error(f"Ошибка кодирования изображения {image_path}: {e}")
         return ""
+    
+def type_text(text: str) -> str:
+    """
+    Безопасно вставляет текст в активное окно через буфер обмена Windows.
+    Защищен от сбоев синхронизации буфера микропаузами.
+    """
+    try:
+        time.sleep(0.5)  # Пауза, чтобы окно успело принять фокус ввода
+        old_clipboard = pyperclip.paste()
+        pyperclip.copy(text)
+        time.sleep(0.15)  # Ожидание обновления системного буфера обмена
+        
+        # Пошаговая эмуляция во избежание "залипания" виртуальных клавиш
+        pyautogui.keyDown('ctrl')
+        time.sleep(0.05)
+        pyautogui.press('v')
+        time.sleep(0.05)
+        pyautogui.keyUp('ctrl')
+        
+        time.sleep(0.1)  # Даем время на вставку текста перед восстановлением буфера
+        pyperclip.copy(old_clipboard)
+        return "Текст успешно вставлен в активное окно."
+    except Exception as e:
+        return f"Не удалось напечатать текст: {e}"
+
+def press_keyboard_combination(keys: str) -> str:
+    """
+    Эмулирует нажатие клавиши или комбинации клавиш (например, 'ctrl+n', 'ctrl+s', 'enter', 'tab').
+    Позволяет управлять интерфейсами приложений.
+    """
+    try:
+        time.sleep(0.3)
+        parts = [k.strip().lower() for k in keys.split('+')]
+        if len(parts) == 1:
+            pyautogui.press(parts[0])
+        else:
+            pyautogui.hotkey(*parts)
+        return f"Комбинация клавиш '{keys}' успешно нажата."
+    except Exception as e:
+        return f"Не удалось нажать комбинацию клавиш '{keys}': {e}"
