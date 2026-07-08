@@ -77,7 +77,10 @@ keyboard.add_hotkey("ctrl+shift+q", stop_speaking)
 async def main_loop():
     bot = NovaLLM(model=LLAMA_BEST)
     listener = VoiceListener()
-    
+    # === ЗАПУСК ВИЗУАЛЬНОГО ОВЕРЛЕЯ ===
+    from modules.ui.overlay import start_overlay, update_status
+    start_overlay()
+    update_status("СПИТ")  # Устанавливаем начальный статус
     # Настройка асинхронного события для активации
     loop = asyncio.get_running_loop()
     activation_event = asyncio.Event()
@@ -91,10 +94,12 @@ async def main_loop():
         if is_active:
             winsound.Beep(1200, 150)  # Высокий бип — проснулась
             print("\n[🎙️] Нова АКТИВИРОВАНА. Непрерывный слух включен...")
+            update_status("СЛУШАЕТ") 
             loop.call_soon_threadsafe(activation_event.set)
         else:
             winsound.Beep(600, 150)   # Низкий бип — заснула
             print(f"\n[💤] Нова уснула. Нажмите {HOTKEY.upper()} для пробуждения...")
+            update_status("СПИТ")
             # --- СЖАТИЕ ИСТОРИИ (ОЧИСТКА ОТ BASE64) ---
             # Перебираем историю и заменяем тяжелые списки с картинками на чистый текст
             for msg in bot.history:
@@ -173,7 +178,8 @@ async def main_loop():
                 for tool in TOOL_REGISTRY.get("os_control", []):
                     if tool not in active_tools:
                         active_tools.append(tool)
-            
+            # Переводим в режим размышлений
+            update_status("ДУМАЕТ")
             print(f"\n[🧠 Роутер]: Выбрана категория '{primary_intent.upper()}'. Всего передано инструментов LLM: {len(active_tools)}")
 
             bot.history.append({"role": "user", "content": user_request})
