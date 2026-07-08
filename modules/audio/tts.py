@@ -41,7 +41,7 @@ def _get_silero_engine():
     return _silero_model
 
 def speak(text: str, speaker: str = "baya"):
-    """Синтезирует и озвучивает текст через Silero v5 напрямую в ОЗУ"""
+    """Синтезирует и озвучивает текст через Silero v5 напрямую в ОЗУ с поддержкой прерывания"""
     if not text:
         return
         
@@ -52,6 +52,11 @@ def speak(text: str, speaker: str = "baya"):
     # Если букв нет (например, пришли только кавычки, точки, скобки или пробелы), пропускаем.
     if not any(char.isalpha() for char in cleaned_text):
         logger.debug(f"Пропуск озвучки строки без букв: '{cleaned_text}'")
+        return
+        
+    # ФАЗА 1: Прерываемся перед началом работы, если флаг затыкания уже установлен
+    if _speech_interrupted:
+        logger.debug("Воспроизведение отменено: зафиксирован флаг прерывания речи.")
         return
         
     # Печатаем реплику только если она действительно будет озвучена
@@ -65,21 +70,30 @@ def speak(text: str, speaker: str = "baya"):
     try:
         sample_rate = 24000  # 24 кГц
         
+        # ФАЗА 2: Проверка непосредственно перед тяжелым синтезом нейросети
+        if _speech_interrupted:
+            return
+            
         # Генерация аудио
         audio = model.apply_tts(
             text=cleaned_text,
             speaker=speaker,
             sample_rate=sample_rate,
             put_accent=True,      # Автоматическое расставление ударений
-            put_yo=True          # Автоматическая замена 'е' на 'ё'
+            put_yo=True           # Автоматическая замена 'е' на 'ё'
         )
         
+        # ФАЗА 3: Проверка перед самой отправкой аудио на звуковую карту
+        if _speech_interrupted:
+            return
+            
         audio_data = audio.numpy()
         sd.play(audio_data, sample_rate)
-        sd.wait()
+        sd.wait()  # При вызове sd.stop() в другом потоке этот метод мгновенно разблокируется
         
     except Exception as e:
         logger.error(f"Ошибка во время синтеза или воспроизведения Silero: {e}")
+
 
 
 # --- ГОЛОСОВЫЕ ФИЛЬТРЫ И АСИНХРОННЫЙ ПЛЕЕР (ДЛЯ РАБОТЫ В СОСТАВЕ MAIN.PY) ---
@@ -128,6 +142,17 @@ async def speak_worker(queue: asyncio.Queue):
             queue.task_done()
             break
         try:
+            # Если прилетел сигнал стоп — очищаем очередь и выходим из цикла
+            if _speech_interrupted:
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                        queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
+                queue.task_done()
+                break
+                
             await asyncio.to_thread(speak, sentence)
         except Exception as e:
             logger.error(f"Ошибка TTS воркера: {e}")

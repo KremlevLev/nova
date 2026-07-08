@@ -6,7 +6,7 @@ import re
 import winsound  # Встроенная библиотека для системного звука
 import keyboard  # Библиотека для глобальных хоткеев
 from core.config import BASE_URL, DEFAULT_MODEL, SYSTEM_PROMPT
-
+from modules.audio.tts import stop_speaking, reset_interrupt_flag
 try:
     from core.config import LLAMA_BEST
 except ImportError:
@@ -67,6 +67,11 @@ AVAILABLE_FUNCTIONS = {
     "get_active_reminders": lambda: scheduler_engine.list_reminders()
 }
 
+# Назначаем глобальные клавиши "стоп"
+# Клавиша ESC остановит Nova, даже если вы свернули терминал
+keyboard.add_hotkey("esc", stop_speaking)
+keyboard.add_hotkey("ctrl+shift+q", stop_speaking)
+
 # --- ГЛАВНЫЙ ЦИКЛ ОРКЕСТРАЦИИ (MAIN LOOP) ---
 
 async def main_loop():
@@ -108,7 +113,8 @@ async def main_loop():
             user_request = listener.listen()
             if not user_request:
                 continue
-            
+            # СБРОС ФЛАГА: Nova начинает новый ответ, прошлые прерывания не должны мешать
+            reset_interrupt_flag()
             if "отключайся" in user_request.lower() or "выключись" in user_request.lower():
                 speak("Отключаю питание. До встречи.")
                 keyboard.unhook_all()
