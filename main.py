@@ -20,7 +20,7 @@ from modules.tools.os_utils import (
     change_volume, open_website, execute_cmd_command, 
     get_system_status, search_web_tavily,
     manage_media, manage_windows, create_quick_note, set_timer,
-    control_smart_home, configure_assistant
+    control_smart_home, configure_assistant, take_screenshot, encode_image_base64
 )
 from modules.audio.stt import VoiceListener
 from modules.audio.tts import (
@@ -75,7 +75,6 @@ keyboard.add_hotkey("ctrl+shift+q", stop_speaking)
 # --- ГЛАВНЫЙ ЦИКЛ ОРКЕСТРАЦИИ (MAIN LOOP) ---
 
 async def main_loop():
-    speak("Инициализация систем. Пожалуйста, подождите.")
     bot = NovaLLM(model=LLAMA_BEST)
     listener = VoiceListener()
     
@@ -96,6 +95,16 @@ async def main_loop():
         else:
             winsound.Beep(600, 150)   # Низкий бип — заснула
             print(f"\n[💤] Нова уснула. Нажмите {HOTKEY.upper()} для пробуждения...")
+            # --- СЖАТИЕ ИСТОРИИ (ОЧИСТКА ОТ BASE64) ---
+            # Перебираем историю и заменяем тяжелые списки с картинками на чистый текст
+            for msg in bot.history:
+                content = msg.get("content")
+                if isinstance(content, list):
+                    text_only = ""
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text_only += item.get("text") or ""
+                    msg["content"] = text_only
             
     keyboard.add_hotkey(HOTKEY, toggle_nova)
     speak(f"Нажмите {HOTKEY.upper()} чтобы активировать непрерывный слух.")
@@ -168,6 +177,33 @@ async def main_loop():
             print(f"\n[🧠 Роутер]: Выбрана категория '{primary_intent.upper()}'. Всего передано инструментов LLM: {len(active_tools)}")
 
             bot.history.append({"role": "user", "content": user_request})
+
+            # --- CV ДЕТЕКТОР ЭКРАНА ---
+            image_path = None
+            # Если пользователь спрашивает про экран, картинку или просит посмотреть на что-то
+            vision_triggers = ["на экране", "экран", "посмотри", "что это", "видишь", "исправь", "что тут"]
+            if any(trigger in user_request.lower() for trigger in vision_triggers):
+                print("[📸] Обнаружен CV-запрос. Делаю снимок экрана...")
+                image_path = take_screenshot()
+                
+            # Формируем мультимодальный контент, если скриншот успешно сделан
+            if image_path:
+                base64_image = encode_image_base64(image_path)
+                user_msg_content = [
+                    {"type": "text", "text": user_request},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{base64_image}"
+                        }
+                    }
+                ]
+                print("[📸] Изображение успешно прикреплено к запросу.")
+            else:
+                user_msg_content = user_request
+
+            # Добавляем структурированный запрос в историю
+            bot.history.append({"role": "user", "content": user_msg_content})
 
             for step in range(3):
                 system_instruction = (SYSTEM_PROMPT)

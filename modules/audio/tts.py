@@ -2,7 +2,6 @@
 import os
 import logging
 import sounddevice as sd
-import numpy as np
 import re
 import asyncio
 import torch
@@ -142,22 +141,22 @@ async def speak_worker(queue: asyncio.Queue):
             queue.task_done()
             break
         try:
-            # Если прилетел сигнал стоп — очищаем очередь и выходим из цикла
+            # Если прилетел сигнал стоп — очищаем очередь и выходим
             if _speech_interrupted:
                 while not queue.empty():
                     try:
                         queue.get_nowait()
-                        queue.task_done()
+                        queue.task_done()  # Подтверждаем сброс фоновых элементов
                     except asyncio.QueueEmpty:
                         break
-                queue.task_done()
+                # Текущий элемент подтвердится автоматически в блоке finally при выходе
                 break
                 
             await asyncio.to_thread(speak, sentence)
         except Exception as e:
             logger.error(f"Ошибка TTS воркера: {e}")
         finally:
-            queue.task_done()
+            queue.task_done()  # Вызывается ровно один раз для извлеченного элемента
 
 _speech_interrupted = False
 

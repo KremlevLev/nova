@@ -10,6 +10,8 @@ import psutil
 import requests
 from core.config import TAVILY_API_KEY
 import ctypes
+import base64
+from PIL import ImageGrab
 
 logger = logging.getLogger("Tools")
 
@@ -272,3 +274,27 @@ def type_text(text: str) -> str:
         return "Текст успешно напечатан в активном окне."
     except Exception as e:
         return f"Не удалось напечатать текст: {e}"
+    
+def take_screenshot() -> str:
+    """Делает снимок всего экрана и сохраняет его во временную папку.
+    Возвращает путь к файлу или пустую строку при ошибке."""
+    try:
+        os.makedirs("data/temp", exist_ok=True)
+        path = "data/temp/screenshot.png"
+        
+        # Делаем снимок и сохраняем в PNG
+        screenshot = ImageGrab.grab()
+        screenshot.save(path, "PNG")
+        return path
+    except Exception as e:
+        logger.error(f"Не удалось сделать скриншот: {e}")
+        return ""
+
+def encode_image_base64(image_path: str) -> str:
+    """Кодирует изображение в строку Base64 для передачи в LLM API"""
+    try:
+        with open(image_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Ошибка кодирования изображения {image_path}: {e}")
+        return ""
