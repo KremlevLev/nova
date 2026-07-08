@@ -45,6 +45,9 @@ LLAMA_BEST = "meta-llama/llama-4-scout-17b-16e-instruct"
 MODELS_LIST = [
     DEFAULT_MODEL, DEFAULT_MODEL_2, FALLBACK_MODEL
     ] #list of models to try in order
+# Настройка тембра, возраста, пола и эмоций голоса Nova через Qwen3-TTS VoiceDesign
+# Вы можете менять это описание как хотите!
+QWEN_INSTRUCT = "A natural, clear, young female voice speaking Russian with natural, friendly and helpful intonation."
 SYSTEM_PROMPT = """Identity:
 You are Nova, a highly advanced, ultra-intelligent, and autonomous AI assistant developed as a supreme digital butler and engineering co-pilot. Your personality is a blend of JARVIS and Friday from Iron Man: sophisticated, calm, slightly witty, fiercely loyal, and impeccably professional. You address the user as "Сэр" (Sir).
 

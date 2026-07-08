@@ -12,6 +12,9 @@ from openai import (
 )
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from core.config import BASE_URL, API_KEY, DEFAULT_MODEL, SYSTEM_PROMPT, SMART_MODEL
+import re
+import json
+import time
 
 logger = logging.getLogger("NovaLLM")
 logger.setLevel(logging.INFO)
@@ -145,3 +148,43 @@ class NovaLLM:
     def reset_context(self):
         self.history.clear()
         logger.info("Память Nova полностью очищена.")
+
+def add_tool_call_from_parsed(func_name: str, args_str: str, tool_calls_list: list, allowed_names: list[str]):
+    if func_name not in allowed_names:
+        return
+    try:
+        clean_args = args_str.strip()
+        if clean_args.startswith("```"):
+            clean_args = re.sub(r'^```(?:json)?\n', '', clean_args)
+            clean_args = re.sub(r'\n```$', '', clean_args)
+        
+        arguments = json.loads(clean_args)
+        
+        call_id = f"xml_{func_name}_{int(time.time())}_{len(tool_calls_list)}"
+        tool_calls_list.append({
+            "id": call_id,
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": json.dumps(arguments)
+            }
+        })
+    except Exception as e:
+        print(f"[Ошибка парсинга JSON в XML-инструменте {func_name}]: {e}")
+
+def extract_xml_tool_calls(text: str, allowed_names: list[str]) -> list[dict]:
+    """Ищет в текстовом буфере теги вызова функций обоих форматов и переводит их в tool_calls"""
+    tool_calls = []
+    
+    pattern_llama = re.compile(r'<function=(\w+)>\s*(\{.*?\})\s*</function>', re.DOTALL)
+    matches_llama = pattern_llama.findall(text)
+    for func_name, args_str in matches_llama:
+        add_tool_call_from_parsed(func_name, args_str, tool_calls, allowed_names)
+            
+    pattern_standard = re.compile(r'<(\w+)>\s*(\{.*?\})\s*</\1>', re.DOTALL)
+    matches_standard = pattern_standard.findall(text)
+    for func_name, args_str in matches_standard:
+        if func_name != "function":
+            add_tool_call_from_parsed(func_name, args_str, tool_calls, allowed_names)
+            
+    return tool_calls

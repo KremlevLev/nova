@@ -2,7 +2,8 @@
 import os
 import json
 import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+import asyncio
 
 class TaskScheduler:
     """
@@ -59,7 +60,7 @@ class TaskScheduler:
             else:
                 target_time = datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M")
                 
-        except Exception as e:
+        except Exception:
             return f"Ошибка: Неверный формат времени '{time_str}'. Используйте '+минуты' (например, '+10') или 'ЧЧ:ММ' (например, '15:30')."
 
         task_id = f"task_{int(target_time.timestamp())}"
@@ -109,3 +110,16 @@ class TaskScheduler:
                 task["completed"] = True
                 break
         self._save_tasks()
+
+async def reminder_checker_worker(scheduler, speak_function):
+    """Фоновая задача, проверяющая и озвучивающая наступившие напоминания"""
+    while True:
+        try:
+            pending = scheduler.get_pending_tasks()
+            for task in pending:
+                speak_function(f"Внимание! Напоминаю: {task['message']}")
+                scheduler.mark_completed(task["id"])
+        except Exception as e:
+            print(f"[Worker Error]: Ошибка проверки задач: {e}")
+            
+        await asyncio.sleep(10) # Опрос каждые 10 секунд
