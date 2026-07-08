@@ -13,3 +13,4 @@ soundfile>=0.12.0
 tenacity>=8.0.0
 torch>=2.0.0
 transformers>=4.40.0
+keyboard

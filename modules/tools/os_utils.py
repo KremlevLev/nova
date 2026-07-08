@@ -9,6 +9,7 @@ import os
 import psutil
 import requests
 from core.config import TAVILY_API_KEY
+import ctypes
 
 logger = logging.getLogger("Tools")
 
@@ -16,19 +17,6 @@ def get_current_time() -> str:
     now = datetime.datetime.now()
     return now.strftime("Сегодня %d.%m.%Y, точное время %H:%M:%S")
 
-def open_application(app_name: str) -> str:
-    app_name = app_name.lower().strip()
-    apps = {"блокнот": "notepad.exe", "калькулятор": "calc.exe", "проводник": "explorer.exe"}
-    executable = apps.get(app_name)
-    if not executable:
-        return f"Ошибка: Я пока не знаю, как открыть приложение '{app_name}'."
-    try:
-        subprocess.Popen(executable)
-        logger.info(f"Успешно запущено: {executable}")
-        return f"Приложение {app_name} успешно открыто."
-    except Exception as e:
-        logger.error(f"Ошибка запуска {executable}: {e}")
-        return f"Произошла ошибка при запуске: {e}"
 
 def close_application(app_name: str) -> str:
     """Закрывает запущенное приложение по его имени в системе"""
@@ -68,19 +56,6 @@ def close_application(app_name: str) -> str:
             pass
         return f"Приложение '{app_name}' не найдено среди активных процессов."
 
-def type_text(text: str) -> str:
-    try:
-        time.sleep(1.0)
-        old_clipboard = pyperclip.paste()
-        pyperclip.copy(text)
-        pyautogui.hotkey('ctrl', 'v')
-        time.sleep(0.1)
-        pyperclip.copy(old_clipboard)
-        logger.info("Текст успешно вставлен.")
-        return "Текст успешно напечатан в активном окне."
-    except Exception as e:
-        logger.error(f"Ошибка при вводе текста: {e}")
-        return f"Не удалось напечатать текст: {e}"
 
 def change_volume(action: str) -> str:
     action = action.lower().strip()
@@ -229,3 +204,71 @@ def configure_assistant(setting: str, value: str) -> str:
     value = value.lower().strip()
     logger.info(f"Настройки ассистента: {setting} -> {value}")
     return f"Настройка '{setting}' успешно изменена на значение '{value}'."
+
+def bring_window_to_front(app_name: str) -> bool:
+    """Находит окно запущенного приложения и принудительно выводит его на передний план (фокус)"""
+    try:
+        user32 = ctypes.windll.user32
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        
+        found_hwnds = []
+
+        def enum_windows_callback(hwnd, lParam):
+            if user32.IsWindowVisible(hwnd):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buffer = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buffer, length + 1)
+                    title = buffer.value.lower()
+                    
+                    # Маппинг русско-английских названий окон
+                    aliases = {
+                        "блокнот": ["блокнот", "notepad"],
+                        "калькулятор": ["калькулятор", "calc", "calculator"],
+                        "проводник": ["проводник", "explorer", "компьютер"],
+                        "chrome": ["chrome", "хром", "google chrome"],
+                        "obsidian": ["obsidian"]
+                    }
+                    search_terms = aliases.get(app_name.lower(), [app_name.lower()])
+                    if any(term in title for term in search_terms):
+                        found_hwnds.append(hwnd)
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(enum_windows_callback), 0)
+        
+        if found_hwnds:
+            hwnd = found_hwnds[0]
+            user32.ShowWindow(hwnd, 9)  # 9 = SW_RESTORE (развернуть окно, если оно свернуто)
+            user32.SetForegroundWindow(hwnd)  # Активировать фокус окна
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка фокусировки окна {app_name}: {e}")
+    return False
+
+def open_application(app_name: str) -> str:
+    app_name = app_name.lower().strip()
+    apps = {"блокнот": "notepad.exe", "калькулятор": "calc.exe", "проводник": "explorer.exe"}
+    executable = apps.get(app_name)
+    if not executable:
+        return f"Ошибка: Я пока не знаю, как открыть приложение '{app_name}'."
+    try:
+        subprocess.Popen(executable)
+        # Ждем 0.5 сек, чтобы Windows успела создать процесс и окно, затем наводим фокус
+        time.sleep(0.5)
+        bring_window_to_front(app_name)
+        return f"Приложение {app_name} успешно открыто."
+    except Exception as e:
+        return f"Произошла ошибка при запуске: {e}"
+
+def type_text(text: str) -> str:
+    try:
+        # Небольшая пауза, чтобы активное окно успело среагировать на фокус
+        time.sleep(0.5)
+        old_clipboard = pyperclip.paste()
+        pyperclip.copy(text)
+        pyautogui.hotkey('ctrl', 'v')
+        time.sleep(0.1)
+        pyperclip.copy(old_clipboard)
+        return "Текст успешно напечатан в активном окне."
+    except Exception as e:
+        return f"Не удалось напечатать текст: {e}"

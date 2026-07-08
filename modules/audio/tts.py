@@ -1,4 +1,4 @@
-# py -m modules.audio.tts
+# modules/audio/tts.py
 import os
 import logging
 import sounddevice as sd
@@ -45,7 +45,17 @@ def speak(text: str, speaker: str = "baya"):
     if not text:
         return
         
-    print(f"\n[🔊 Nova Говорит]: {text}")
+    cleaned_text = text.strip()
+    
+    # ЗАЩИТА ОТ ОШИБОК СИНТЕЗА:
+    # Проверяем, содержит ли строка хотя бы одну букву (русскую или английскую).
+    # Если букв нет (например, пришли только кавычки, точки, скобки или пробелы), пропускаем.
+    if not any(char.isalpha() for char in cleaned_text):
+        logger.debug(f"Пропуск озвучки строки без букв: '{cleaned_text}'")
+        return
+        
+    # Печатаем реплику только если она действительно будет озвучена
+    print(f"\n[🔊 Nova Говорит]: {cleaned_text}")
     
     model = _get_silero_engine()
     if not model:
@@ -53,11 +63,11 @@ def speak(text: str, speaker: str = "baya"):
         return
         
     try:
-        sample_rate = 24000  # 24 кГц — оптимальный баланс качества и скорости на CPU
+        sample_rate = 24000  # 24 кГц
         
         # Генерация аудио
         audio = model.apply_tts(
-            text=text.strip(),
+            text=cleaned_text,
             speaker=speaker,
             sample_rate=sample_rate,
             put_accent=True,      # Автоматическое расставление ударений
@@ -124,25 +134,21 @@ async def speak_worker(queue: asyncio.Queue):
         finally:
             queue.task_done()
 
+_speech_interrupted = False
 
-# --- БЛОК ЗАМЕРА СКОРОСТИ ---
-if __name__ == "__main__":
-    import time
-    logging.basicConfig(level=logging.INFO)
-    
-    print("\n--- Запуск теста скорости Silero TTS v5 (Голос: baya) ---")
-    
-    # 1. Первый запуск (Холодный старт: скачивание + чтение + первый прогрев)
-    t0 = time.perf_counter()
-    speak("Привет! Это первая фраза. Сейчас модель загружается в оперативную память вашего компьютера.")
-    print(f"⏱️ Время первого запуска (с загрузкой моделей): {time.perf_counter() - t0:.2f} сек.\n")
-    
-    # 2. Второе воспроизведение (Горячий старт из ОЗУ)
-    t0 = time.perf_counter()
-    speak("А это вторая фраза. Она должна сгенерироваться гораздо быстрее, так как файлы уже в оперативной памяти.")
-    print(f"⏱️ Время второго запуска (горячий старт): {time.perf_counter() - t0:.2f} сек.\n")
-    
-    # 3. Третий запуск (Реальный системный ответ)
-    t0 = time.perf_counter()
-    speak("Блокнот успешно открыт.")
-    print(f"⏱️ Время генерации короткого ответа: {time.perf_counter() - t0:.2f} сек.\n")
+def stop_speaking():
+    """Моментально останавливает текущее воспроизведение и взводит флаг прерывания"""
+    global _speech_interrupted
+    _speech_interrupted = True
+    try:
+        sd.stop()  # Win32-метод sounddevice мгновенно обрывает поток в динамиках
+    except Exception:
+        pass
+    print("\n[🔇 Nova]: Воспроизведение прервано.")
+
+def is_interrupted() -> bool:
+    return _speech_interrupted
+
+def reset_interrupt_flag():
+    global _speech_interrupted
+    _speech_interrupted = False

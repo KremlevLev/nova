@@ -7,10 +7,15 @@ import sounddevice as sd
 import requests
 from core.config import GROQ_API_KEY
 
-# Защита от конфликта библиотек в Windows
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 logger = logging.getLogger("STT")
+
+# Известные галлюцинации Whisper при обработке фонового шума или тишины
+WHISPER_HALLUCINATIONS = {
+    "спасибо", "спасибо.", "спасибо за внимание", "продолжение следует",
+    "минут", "вы", "я", "пожалуйста", "пожалуйста.", "просмотр", 
+    "субтитры", "продолжение", "спасибо за просмотр"
+}
 
 class VoiceListener:
     def __init__(self):
@@ -18,104 +23,102 @@ class VoiceListener:
         if not GROQ_API_KEY:
             logger.warning("Критическая ошибка: GROQ_API_KEY не обнаружен в конфигурации!")
             
-        # Настройки аудио
         self.sample_rate = 16000
         self.block_size = 2048
-        self.silence_duration = 1.2  # Время ожидания тишины (сокращено с 1.5 для скорости)
+        self.silence_duration = 1.2  # Время ожидания тишины перед отправкой
+        self.energy_threshold = None  # Базовое значение порога
         logger.info("Система аудиозахвата готова. Инференс: Groq API (whisper-large-v3-turbo)")
 
     def _get_rms(self, data):
-        """Математическое вычисление громкости (Root Mean Square) куска аудио"""
         return np.sqrt(np.mean(np.square(data.astype(np.float32) / 32768.0)))
 
     def listen(self) -> str:
-        """Слушает микрофон, автоматически калибрует шум и ждет конца фразы"""
         with sd.InputStream(samplerate=self.sample_rate, channels=1, blocksize=self.block_size, dtype='int16') as stream:
             
-            print("\n[🎤] Калибровка фона...")
-            bg_rms_list = []
+            # ОТКАЗОУСТОЙЧИВАЯ КАЛИБРОВКА:
+            # Проверяем наличие атрибута через hasattr. Даже если конструктор закэшировался старый,
+            # этот блок сам обнаружит отсутствие переменной, откалибрует фон и создаст её.
+            if not hasattr(self, 'energy_threshold') or self.energy_threshold is None:
+                print("\n[🎤] Калибровка фона (выполняется один раз при запуске)...")
+                bg_rms_list = []
+                for _ in range(int(self.sample_rate / self.block_size)):
+                    data, overflow = stream.read(self.block_size)
+                    bg_rms_list.append(self._get_rms(data))
+                
+                self.energy_threshold = np.mean(bg_rms_list) * 2.5
+                if self.energy_threshold < 0.012:
+                    self.energy_threshold = 0.012
+                print(f"[🎤] Калибровка завершена. Базовый порог RMS VAD: {self.energy_threshold:.4f}")
             
-            # Читаем 1 секунду тишины, чтобы понять шум комнаты
-            for _ in range(int(self.sample_rate / self.block_size)):
-                data, overflow = stream.read(self.block_size)
-                bg_rms_list.append(self._get_rms(data))
-            
-            # Порог срабатывания: средний шум комнаты x 2.0
-            energy_threshold = np.mean(bg_rms_list) * 2.0
-            if energy_threshold < 0.005:
-                energy_threshold = 0.005
-            
-            print("[🎤] Говорите (я дождусь конца фразы)...")
-            
+            # Во всех последующих циклах сразу переходим к прослушиванию
+            print(f"[🎤] Слушаю (порог RMS VAD: {self.energy_threshold:.4f})...")
             audio_buffer = []
             started_speaking = False
-            silence_chunks = 0
-            
-            # Вычисляем лимит чанков тишины
             max_silence_chunks = int((self.silence_duration * self.sample_rate) / self.block_size)
+            silence_chunks = 0
+            active_blocks_count = 0  
             
             while True:
                 data, overflow = stream.read(self.block_size)
                 rms = self._get_rms(data)
                 
-                if rms > energy_threshold:
+                if rms > self.energy_threshold:
                     started_speaking = True
                     silence_chunks = 0
+                    active_blocks_count += 1
                     audio_buffer.append(data)
                 elif started_speaking:
                     silence_chunks += 1
                     audio_buffer.append(data)
-                    
                     if silence_chunks > max_silence_chunks:
-                        break  # Зафиксировано окончание фразы
+                        break
                 else:
-                    # Удерживаем пред-запись (0.5 сек), чтобы не обрезать начало фразы
                     audio_buffer.append(data)
+                    # Пред-буфер в полсекунды для мягкого захвата начала фразы
                     if len(audio_buffer) > int((0.5 * self.sample_rate) / self.block_size):
                         audio_buffer.pop(0)
 
-        # Сохраняем записанный аудиопоток во временный WAV-файл
+        # ЛОКАЛЬНАЯ ФИЛЬТРАЦИЯ ШУМОВЫХ ВСПЛЕСКОВ:
+        if active_blocks_count < 2:
+            logger.debug(f"[STT Skip] Отклонен короткий шум ({active_blocks_count} блоков VAD).")
+            return ""
+
         temp_file = "data/temp_mic.wav"
         os.makedirs("data", exist_ok=True)
-        
         final_audio = np.concatenate(audio_buffer)
         with wave.open(temp_file, 'wb') as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit
+            wf.setsampwidth(2)
             wf.setframerate(self.sample_rate)
             wf.writeframes(final_audio.tobytes())
             
-        # Отправка WAV-файла на транскрибацию в Groq API
         if not GROQ_API_KEY:
-            logger.error("Ошибка распознавания: GROQ_API_KEY отсутствует.")
             return ""
 
         try:
             url = "https://api.groq.com/openai/v1/audio/transcriptions"
-            headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}"
-            }
-            
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
             with open(temp_file, "rb") as f:
-                files = {
-                    "file": ("temp_mic.wav", f, "audio/wav")
-                }
+                files = {"file": ("temp_mic.wav", f, "audio/wav")}
                 data = {
-                    "model": "whisper-large-v3-turbo",
-                    "language": "ru" # Жесткое указание языка исключает галлюцинации и ускоряет инференс
+                    "model": "whisper-large-v3-turbo", 
+                    "language": "ru",
+                    "temperature": "0.0"  # СТРОГИЙ ДЕКОДЕР
                 }
-                
                 response = requests.post(url, headers=headers, files=files, data=data, timeout=8.0)
             
             if response.status_code == 200:
                 text = response.json().get("text", "").strip()
                 if text:
+                    # ПОСТ-ФИЛЬТР ТЕКСТОВЫХ ГАЛЛЮЦИНАЦИЙ:
+                    clean_text = text.lower().strip().rstrip(".!?")
+                    if clean_text in WHISPER_HALLUCINATIONS:
+                        logger.debug(f"[STT] Перехвачена и отсечена галлюцинация Whisper: '{text}'")
+                        return ""
+                    
                     print(f"[Вы сказали]: {text}")
-                return text
-            else:
-                logger.error(f"Ошибка Groq API STT (HTTP {response.status_code}): {response.text}")
-                return ""
-                
+                    return text
+            return ""
         except Exception as e:
-            logger.error(f"Не удалось связаться с Groq API STT: {e}")
+            logger.error(f"Ошибка Groq API STT: {e}")
             return ""

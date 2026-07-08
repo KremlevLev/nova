@@ -3,7 +3,9 @@ import asyncio
 import json
 import traceback
 import re
-from core.config import BASE_URL, DEFAULT_MODEL
+import winsound  # Встроенная библиотека для системного звука
+import keyboard  # Библиотека для глобальных хоткеев
+from core.config import BASE_URL, DEFAULT_MODEL, SYSTEM_PROMPT
 
 try:
     from core.config import LLAMA_BEST
@@ -26,13 +28,13 @@ from modules.audio.tts import (
     is_text_code_or_json, is_inside_xml_block
 )
 
-# Подключение локальных движков
+# Подключение локальных движков памяти, задач и индексатора
 from modules.brain.memory import LocalVectorMemory
 from modules.tools.tasks import TaskScheduler, reminder_checker_worker
 from modules.tools.app_indexer import WindowsAppIndexer
 from modules.brain.router import encoder as shared_encoder
 
-# Подключение изолированных перехватчиков (Bypasses)
+# Подключение перехватчиков (Bypasses)
 from modules.brain.bypass import check_instant_app_launch, check_instant_app_close, check_fast_commands
 
 # --- ИНИЦИАЛИЗАЦИЯ ДВИЖКОВ (СИНГЛТОНЫ) ---
@@ -71,26 +73,61 @@ async def main_loop():
     speak("Инициализация систем. Пожалуйста, подождите.")
     bot = NovaLLM(model=LLAMA_BEST)
     listener = VoiceListener()
-    speak("Нова готова к работе. Я вас слушаю.")
     
-    # Список имен функций для фильтрации тегов в TTS
+    # Настройка асинхронного события для активации
+    loop = asyncio.get_running_loop()
+    activation_event = asyncio.Event()
+    
+    is_active = False  # По умолчанию Nova спит. True — слушает непрерывно.
+    HOTKEY = "ctrl+shift+space"
+    
+    def toggle_nova():
+        nonlocal is_active
+        is_active = not is_active
+        if is_active:
+            winsound.Beep(1200, 150)  # Высокий бип — проснулась
+            print("\n[🎙️] Нова АКТИВИРОВАНА. Непрерывный слух включен...")
+            loop.call_soon_threadsafe(activation_event.set)
+        else:
+            winsound.Beep(600, 150)   # Низкий бип — заснула
+            print(f"\n[💤] Нова уснула. Нажмите {HOTKEY.upper()} для пробуждения...")
+            
+    keyboard.add_hotkey(HOTKEY, toggle_nova)
+    speak(f"Нажмите {HOTKEY.upper()} чтобы активировать непрерывный слух.")
+    
     tool_names = list(AVAILABLE_FUNCTIONS.keys())
 
     while True:
         try:
+            if not is_active:
+                await activation_event.wait()
+                activation_event.clear()
+                if not is_active:
+                    continue  # Предохранитель от ложных вызовов
+            
             user_request = listener.listen()
             if not user_request:
                 continue
-
-            if "отключайся" in user_request.lower() or "усни" in user_request.lower():
+            
+            if "отключайся" in user_request.lower() or "выключись" in user_request.lower():
                 speak("Отключаю питание. До встречи.")
+                keyboard.unhook_all()
                 break
+
+            # Перевод ассистента в сон голосом
+            if "усни" in user_request.lower() or "спи" in user_request.lower():
+                speak("Ухожу в спящий режим. Зовите, когда понадоблюсь.")
+                winsound.Beep(600, 150)
+                is_active = False
+                print(f"\n[💤] Нова ушла в спящий режим. Нажмите {HOTKEY.upper()} для пробуждения...")
+                continue
 
             # 0.А. МГНОВЕННЫЙ ЗАПУСК ПО (ZERO-LLM BYPASS)
             is_launch, launch_speech = check_instant_app_launch(user_request, app_launcher)
             if is_launch:
                 print(f"[⚡ Instant App Launch Match]: {launch_speech}")
                 speak(launch_speech)
+                print(f"\n[💤] Снова в режиме сна. Нажмите {HOTKEY.upper()} для вызова...")
                 continue
 
             # 0.Б. МГНОВЕННОЕ ЗАКРЫТИЕ ПО (ZERO-LLM BYPASS)
@@ -98,6 +135,7 @@ async def main_loop():
             if is_close:
                 print(f"[⚡ Instant App Close Match]: {close_speech}")
                 speak(close_speech)
+                print(f"\n[💤] Снова в режиме сна. Нажмите {HOTKEY.upper()} для вызова...")
                 continue
 
             # 1. Быстрый Bypass по регулярным выражениям (звук, время, окна)
@@ -105,23 +143,28 @@ async def main_loop():
             if is_fast:
                 print(f"[⚡ Regex Bypass Match]: {fast_response}")
                 speak(fast_response)
+                print(f"\n[💤] Снова в режиме сна. Нажмите {HOTKEY.upper()} для вызова...")
                 continue
 
             # 2. Основной агентный цикл
             intents = get_intent(user_request)
             primary_intent = intents[0]
-            active_tools = TOOL_REGISTRY.get(primary_intent, [])
             
-            print(f"\n[🧠 Роутер]: Выбрана категория '{primary_intent.upper()}'. Передано инструментов: {len(active_tools)}")
+            # Собираем инструменты выбранной категории
+            active_tools = list(TOOL_REGISTRY.get(primary_intent, []))
+            
+            # ЗАЩИТА ОТ ГОЛОДАНИЯ МОДЕЛИ (Tool Starvation Protection):
+            if primary_intent not in ["chat", "goodbye"]:
+                for tool in TOOL_REGISTRY.get("os_control", []):
+                    if tool not in active_tools:
+                        active_tools.append(tool)
+            
+            print(f"\n[🧠 Роутер]: Выбрана категория '{primary_intent.upper()}'. Всего передано инструментов LLM: {len(active_tools)}")
 
             bot.history.append({"role": "user", "content": user_request})
 
             for step in range(3):
-                system_instruction = (
-                    "Ты Nova, ИИ-ассистент для Windows. "
-                    "Тебе разрешено вызывать ТОЛЬКО те инструменты, которые предоставлены в текущем запросе (в параметре 'tools'). "
-                    "Вызов любых других названий инструментов строго запрещен. Если ты выполнила действие, отвечаешь очень коротко."
-                )
+                system_instruction = (SYSTEM_PROMPT)
                 messages = [{"role": "system", "content": system_instruction}] + bot.history
                 
                 kwargs = {
@@ -189,9 +232,7 @@ async def main_loop():
                                 idx = tc.index
                                 if idx not in tool_calls_data:
                                     tool_calls_data[idx] = {
-                                        "id": tc.id or "",
-                                        "type": "function",
-                                        "function": {"name": "", "arguments": ""}
+                                        "id": tc.id or "", "type": "function", "function": {"name": "", "arguments": ""}
                                     }
                                 if tc.id:
                                     tool_calls_data[idx]["id"] = tc.id
@@ -233,7 +274,6 @@ async def main_loop():
                 if tool_calls:
                     for tool_call in tool_calls:
                         func_name = tool_call["function"]["name"]
-                        
                         try:
                             func_args = json.loads(tool_call["function"]["arguments"]) if tool_call["function"]["arguments"] else {}
                         except Exception as je:
@@ -241,15 +281,11 @@ async def main_loop():
                             func_args = {}
                             
                         print(f"   [⚙️ Инструмент запущен]: {func_name} {func_args}")
-                        
                         func_to_call = AVAILABLE_FUNCTIONS.get(func_name)
                         result = func_to_call(**func_args) if func_to_call else "Ошибка"
                         
                         bot.history.append({
-                            "role": "tool", 
-                            "tool_call_id": tool_call["id"], 
-                            "name": func_name, 
-                            "content": str(result)
+                            "role": "tool", "tool_call_id": tool_call["id"], "name": func_name, "content": str(result)
                         })
                     continue
                 else:
