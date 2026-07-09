@@ -20,7 +20,7 @@ from modules.tools.os_utils import (
     get_system_status, search_web_tavily,
     manage_media, manage_windows, create_quick_note, set_timer,
     control_smart_home, configure_assistant, take_screenshot, encode_image_base64,
-    press_keyboard_combination
+    press_keyboard_combination, scrape_webpage, get_clipboard_content, set_clipboard_content, run_terminal_command
 )
 
 from modules.audio.stt import VoiceListener
@@ -57,14 +57,17 @@ AVAILABLE_FUNCTIONS = {
     "get_current_time": get_current_time,
     "open_application": open_application,
     "close_application": close_application,
+
     "type_text": type_text,
     "change_volume": change_volume,
     "open_website": open_website,
     "execute_cmd_command": execute_cmd_command,
+
     "get_system_status": get_system_status,
     "search_web_tavily": search_web_tavily,
     "manage_media": manage_media,
     "manage_windows": manage_windows,
+
     "create_quick_note": create_quick_note,
     "set_timer": set_timer,
     "control_smart_home": control_smart_home,
@@ -78,11 +81,39 @@ AVAILABLE_FUNCTIONS = {
     "execute_python_code": execute_python_code,
     "mouse_click": mouse_click,
     "press_keyboard_combination": press_keyboard_combination,
-    "create_workspace_project": create_workspace_project
+    "create_workspace_project": create_workspace_project,
+
+    "scrape_webpage": scrape_webpage,
+    "get_clipboard_content": get_clipboard_content,
+    "set_clipboard_content": set_clipboard_content,
+    "run_terminal_command": run_terminal_command
 }
 
 keyboard.add_hotkey("esc", stop_speaking)
 keyboard.add_hotkey("ctrl+shift+q", stop_speaking)
+
+def clean_arguments_for_function(func, func_args: dict) -> dict:
+    """
+    Инспектирует сигнатуру функции и удаляет любые аргументы, 
+    которые функция не способна принять. Предотвращает TypeError от ИИ.
+    """
+    import inspect
+    try:
+        sig = inspect.signature(func)
+        # Если функция принимает произвольные именованные аргументы (**kwargs), возвращаем как есть
+        has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if has_kwargs:
+            return func_args
+            
+        # Фильтруем только те ключи, которые явно объявлены в сигнатуре
+        cleaned_args = {}
+        for k, v in func_args.items():
+            if k in sig.parameters and k != "":
+                cleaned_args[k] = v
+        return cleaned_args
+    except Exception:
+        # В случае сбоя инспекции возвращаем исходные аргументы для стабильности
+        return func_args
 
 def should_pass_tools(request: str) -> bool:
     """Определяет, нужно ли передавать инструменты для оптимизации контекста коротких фраз"""
@@ -355,9 +386,20 @@ async def main_loop():
                             print(f"   [⚠️ Ошибка разбора аргументов JSON для {func_name}]: {je}")
                             func_args = {}
                             
-                        print(f"   [⚙️ Инструмент запущен]: {func_name} {func_args}")
                         func_to_call = AVAILABLE_FUNCTIONS.get(func_name)
-                        result = func_to_call(**func_args) if func_to_call else "Ошибка"
+                        
+                        if func_to_call:
+                            # БЕЗОПАСНАЯ ОЧИСТКА АРГУМЕНТОВ:
+                            cleaned_args = clean_arguments_for_function(func_to_call, func_args)
+                            print(f"   [⚙️ Инструмент запущен]: {func_name} {cleaned_args}")
+                            
+                            try:
+                                result = func_to_call(**cleaned_args)
+                            except Exception as run_err:
+                                result = f"Ошибка при выполнении функции: {run_err}"
+                        else:
+                            print(f"   [⚙️ Инструмент не найден]: {func_name}")
+                            result = "Ошибка: Данный инструмент недоступен."
                         
                         bot.history.append({
                             "role": "tool", "tool_call_id": tool_call["id"], "name": func_name, "content": str(result)

@@ -33,7 +33,7 @@ class RECT(ctypes.Structure):
         ('bottom', ctypes.c_long)
     ]
 
-def get_current_time() -> str:
+def get_current_time(*args, **kwargs) -> str:  # Добавлен прием *args, **kwargs
     now = datetime.datetime.now()
     return now.strftime("Сегодня %d.%m.%Y, точное время %H:%M:%S")
 
@@ -411,3 +411,95 @@ def press_keyboard_combination(keys: str) -> str:
         return f"Комбинация клавиш '{keys}' успешно нажата."
     except Exception as e:
         return f"Не удалось нажать комбинацию клавиш '{keys}': {e}"
+
+def scrape_webpage(url: str) -> str:
+    """Скачивает веб-страницу и извлекает из нее чистый текст для анализа документации"""
+    try:
+        from bs4 import BeautifulSoup
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if response.status_code != 200:
+            return f"Ошибка доступа к сайту: код {response.status_code}"
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Убираем мусорные теги
+        for script in soup(["script", "style", "nav", "footer", "header"]):
+            script.extract()
+            
+        text = soup.get_text(separator=' ')
+        # Чистим пробелы
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        clean_text = '\n'.join(chunk for chunk in chunks if chunk)
+        
+        # Ограничиваем объем текста для экономии контекста (например, первые 6000 символов)
+        return clean_text[:6000] + "\n...[Текст обрезан для экономии памяти]..."
+    except Exception as e:
+        return f"Не удалось прочитать страницу: {e}"
+    
+def get_clipboard_content(*args, **kwargs) -> str:  # Добавлен прием *args, **kwargs
+    """Возвращает текущий текстовый буфер обмена Windows"""
+    try:
+        return pyperclip.paste()
+    except Exception as e:
+        return f"Не удалось прочитать буфер обмена: {e}"
+
+def set_clipboard_content(text: str, *args, **kwargs) -> str:  # Добавлен прием *args, **kwargs
+    """Записывает указанный текст в буфер обмена пользователя"""
+    try:
+        pyperclip.copy(text)
+        return "Текст успешно скопирован в ваш буфер обмена."
+    except Exception as e:
+        return f"Не удалось записать в буфер обмена: {e}"
+    
+def run_terminal_command(command: str, *args, **kwargs) -> str:  # Добавлен прием *args, **kwargs
+    """
+    Выполняет консольную команду (CMD/PowerShell) на ПК и возвращает её вывод.
+    Каждый запуск защищен блокирующим окном согласия HITL.
+    """
+    import subprocess
+    from modules.tools.executor import prompt_hitl_permission
+    
+    # 1. Запрос физического подтверждения от пользователя перед запуском шелла
+    details = f"Действие: Выполнение консольной команды\n\nКоманда для запуска:\n> {command}"
+    if not prompt_hitl_permission("Терминальный оператор", details):
+        return "Ошибка: Выполнение консольной команды заблокировано пользователем."
+        
+    try:
+        # Запуск процесса с таймаутом 15 секунд (предотвращает вечное зависание при запуске бесконечных служб)
+        result = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15.0
+        )
+        
+        # 2. Робастное автоопределение кодировки вывода Windows (CMD русскоязычной ОС использует cp866)
+        def safe_decode(data: bytes) -> str:
+            for encoding in ['utf-8', 'cp866', 'cp1251']:
+                try:
+                    return data.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+            return data.decode('utf-8', errors='replace')
+            
+        stdout_str = safe_decode(result.stdout).strip()
+        stderr_str = safe_decode(result.stderr).strip()
+        
+        # 3. Формирование структурированного ответа для LLM
+        output_blocks = []
+        if stdout_str:
+            output_blocks.append(f"[Вывод терминала (stdout)]:\n{stdout_str}")
+        if stderr_str:
+            output_blocks.append(f"[Вывод ошибок (stderr)]:\n{stderr_str}")
+            
+        if not output_blocks:
+            return f"Команда выполнена с кодом {result.returncode}. Консоль вернула пустую строку."
+            
+        return "\n\n".join(output_blocks)
+        
+    except subprocess.TimeoutExpired:
+        return "Ошибка: Превышен лимит времени выполнения команды (15 секунд). Команда принудительно остановлена."
+    except Exception as e:
+        return f"Критический сбой выполнения команды: {e}"

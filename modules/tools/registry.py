@@ -179,11 +179,69 @@ create_project_tool = {
     }
 }
 
+scrape_webpage_tool = {
+    "type": "function",
+    "function": {
+        "name": "scrape_webpage",
+        "description": "Загружает веб-страницу по URL и извлекает из неё чистый текст. Используйте для подробного чтения статей, руководств и документации из интернета.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Полный адрес страницы, например: 'https://docs.pytest.org/'"}
+            },
+            "required": ["url"]
+        }
+    }
+}
+
+get_clipboard_tool = {
+    "type": "function",
+    "function": {
+        "name": "get_clipboard_content",
+        "description": "Возвращает текущий скопированный пользователем текст из буфера обмена Windows. Используйте, чтобы проанализировать логи ошибок или куски кода, скопированные пользователем.",
+        "parameters": {"type": "object", "properties": {}}
+    }
+}
+
+set_clipboard_tool = {
+    "type": "function",
+    "function": {
+        "name": "set_clipboard_content",
+        "description": "Копирует указанный текст в буфер обмена Windows пользователя.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Текст, который нужно положить в буфер обмена."}
+            },
+            "required": ["text"]
+        }
+    }
+}
+
+run_terminal_tool = {
+    "type": "function",
+    "function": {
+        "name": "run_terminal_command",
+        "description": "Выполняет консольную команду (CMD) в системе Windows в скрытом фоновом режиме и возвращает текстовый ответ. Позволяет проверять статус Git, запускать тесты, устанавливать библиотеки через pip. Требует подтверждения пользователя.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Полный текст консольной команды."}
+            },
+            "required": ["command"]
+        }
+    }
+}
+
 # Единый плоский список всех инструментов для Nova
 ALL_TOOLS = [
     open_app_tool, 
     close_app_tool, 
     type_text_tool, 
+    scrape_webpage_tool,
+    get_clipboard_tool,
+    set_clipboard_tool,
+    run_terminal_tool,
     create_project_tool,
     get_time_tool, 
     change_volume_tool, 
