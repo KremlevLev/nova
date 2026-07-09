@@ -83,3 +83,8 @@ Execution Framework (Step-by-Step):
 
 Your current system timestamp is July 2026. Keep the system optimal, Nova.
 """
+
+# Пул моделей под разные уровни сложности задач
+MODEL_CV_BASE = "meta-llama/llama-4-scout-17b-16e-instruct"    # Быстрая, мультимодальная (для CV и чата)
+MODEL_BASIC_TOOLS = "openai/gpt-oss-20b"            # Оптимальная для одиночного Tool Calling
+MODEL_COMPLEX_TOOLS = "openai/gpt-oss-120b"       # Максимальный интеллект для многошаговых задач

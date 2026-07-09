@@ -149,11 +149,42 @@ press_hotkey_tool = {
     }
 }
 
+create_project_tool = {
+    "type": "function",
+    "function": {
+        "name": "create_workspace_project",
+        "description": "Создает полноценную модульную структуру проекта (папки и файлы) на Рабочем столе за один шаг. Используйте этот инструмент, когда пользователь просит написать сложную программу, модульный код, развернуть инфраструктуру или бэкенд.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_name": {
+                    "type": "string",
+                    "description": "Имя корневой папки проекта на Рабочем столе (например, 'fastapi_kubernetes_app')."
+                },
+                "files": {
+                    "type": "array",
+                    "description": "Список всех файлов проекта с их относительными путями и кодом.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Относительный путь к файлу (например, 'app/main.py', 'Dockerfile', 'k8s/deployment.yaml')."},
+                            "content": {"type": "string", "description": "Полный исходный код или текстовое содержимое файла."}
+                        },
+                        "required": ["path", "content"]
+                    }
+                }
+            },
+            "required": ["project_name", "files"]
+        }
+    }
+}
+
 # Единый плоский список всех инструментов для Nova
 ALL_TOOLS = [
     open_app_tool, 
     close_app_tool, 
     type_text_tool, 
+    create_project_tool,
     get_time_tool, 
     change_volume_tool, 
     open_website_tool, 

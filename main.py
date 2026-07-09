@@ -11,7 +11,7 @@ try:
     from core.config import LLAMA_BEST
 except ImportError:
     LLAMA_BEST = DEFAULT_MODEL
-from modules.tools.executor import execute_python_code, mouse_click
+from modules.tools.executor import execute_python_code, mouse_click, create_workspace_project
 from modules.brain.llm import NovaLLM, extract_xml_tool_calls
 from modules.tools.registry import ALL_TOOLS  # Импортируем плоский список инструментов
 from modules.tools.os_utils import (
@@ -37,7 +37,7 @@ from modules.tools.tasks import TaskScheduler, reminder_checker_worker
 from modules.tools.app_indexer import WindowsAppIndexer
 
 # Подключение перехватчиков (Bypasses)
-from modules.brain.bypass import check_instant_app_launch, check_instant_app_close, check_fast_commands
+from modules.brain.bypass import check_instant_app_launch, check_instant_app_close, check_fast_commands, determine_model_by_complexity
 
 # Однопоточный сокет-замок от дубликатов процессов
 try:
@@ -77,7 +77,8 @@ AVAILABLE_FUNCTIONS = {
     
     "execute_python_code": execute_python_code,
     "mouse_click": mouse_click,
-    "press_keyboard_combination": press_keyboard_combination
+    "press_keyboard_combination": press_keyboard_combination,
+    "create_workspace_project": create_workspace_project
 }
 
 keyboard.add_hotkey("esc", stop_speaking)
@@ -226,11 +227,23 @@ async def main_loop():
             bot.history.append({"role": "user", "content": user_msg_content})
 
             for step in range(3):
-                system_instruction = (SYSTEM_PROMPT)
+                system_instruction = SYSTEM_PROMPT
                 messages = [{"role": "system", "content": system_instruction}] + bot.history
                 
+                # ДИНАМИЧЕСКИЙ ВЫБОР МОДЕЛИ НА ОСНОВЕ СЛОЖНОСТИ ЗАПРОСА
+                has_image = image_path is not None
+                selected_model = determine_model_by_complexity(
+                    user_request, 
+                    has_image=has_image, 
+                    needs_tools=use_tools
+                )
+                
+                # Вывод отладочной информации в консоль
+                if step == 0:
+                    print(f"[🧠 Роутер Сложности]: Выбрана модель {selected_model}")
+                
                 kwargs = {
-                    "model": bot.primary_model,
+                    "model": selected_model,  # <--- Модель подменяется динамически
                     "messages": messages,
                     "stream": True,
                 }

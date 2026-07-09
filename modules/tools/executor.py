@@ -135,3 +135,53 @@ def mouse_click(x: int, y: int, click_type: str = "single") -> str:
         return "Аварийная остановка: Пользователь перехватил мышь и сорвал выполнение."
     except Exception as e:
         return f"Не удалось выполнить клик: {e}"
+    
+def create_workspace_project(project_name: str, files: list) -> str:
+    """
+    Создает модульную структуру проекта (папки и файлы) на Рабочем столе пользователя за один шаг.
+    Защищен окном подтверждения HITL. После создания открывает папку в Проводнике.
+    files - список словарей [{"path": "relative/path.py", "content": "file_code"}]
+    """
+    import os
+    try:
+        desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+        project_dir = os.path.normpath(os.path.join(desktop, project_name))
+        
+        # Формируем список файлов для окна подтверждения безопасности
+        file_list = "\n".join([f"- {f.get('path')}" for f in files if f.get('path')])
+        details = (
+            f"Имя проекта: {project_name}\n"
+            f"Директория: {project_dir}\n\n"
+            f"Будет создана файловая структура:\n{file_list}"
+        )
+        
+        # Запрос согласия пользователя
+        if not prompt_hitl_permission("Генерация структуры проекта", details):
+            return "Ошибка: Действие отклонено пользователем."
+            
+        created_count = 0
+        for file_data in files:
+            rel_path = file_data.get("path")
+            content = file_data.get("content", "")
+            if not rel_path:
+                continue
+                
+            # Нормализуем пути под Windows
+            clean_rel_path = os.path.normpath(rel_path)
+            full_file_path = os.path.normpath(os.path.join(project_dir, clean_rel_path))
+            
+            # Создаем все промежуточные директории
+            os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+            
+            # Записываем контент файла
+            with open(full_file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            created_count += 1
+            
+        # Автоматически открываем созданную директорию в Проводнике
+        if os.path.exists(project_dir):
+            os.startfile(project_dir)
+            
+        return f"Проект '{project_name}' успешно создан на Рабочем столе. Записано файлов: {created_count}. Папка открыта."
+    except Exception as e:
+        return f"Не удалось создать проект: {e}"

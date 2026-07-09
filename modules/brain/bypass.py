@@ -41,6 +41,8 @@ FAST_COMMAND_PATTERNS = [
 
 def check_instant_app_launch(user_text: str, app_launcher) -> tuple[bool, str]:
     """Мгновенно находит и запускает ярлык в обход нейросети"""
+    if is_complex_request(user_text):
+        return False, ""
     text_clean = user_text.lower().strip()
     for verb in LAUNCH_VERBS:
         pattern = rf'\b{verb}\s+(.+)'
@@ -54,6 +56,8 @@ def check_instant_app_launch(user_text: str, app_launcher) -> tuple[bool, str]:
 
 def check_instant_app_close(user_text: str) -> tuple[bool, str]:
     """Мгновенно находит процесс программы и завершает его локально за 5 мс"""
+    if is_complex_request(user_text):
+        return False, ""
     text_clean = user_text.lower().strip()
     for verb in CLOSE_VERBS:
         pattern = rf'\b{verb}\s+(.+)'
@@ -67,9 +71,47 @@ def check_instant_app_close(user_text: str) -> tuple[bool, str]:
 
 def check_fast_commands(user_text: str) -> tuple[bool, str]:
     """Проверяет фразы на соответствие быстрым системным паттернам"""
+    if is_complex_request(user_text):
+        return False, ""
     for pattern, action in FAST_COMMAND_PATTERNS:
         match = pattern.search(user_text)
         if match:
             _, speech_text = action(match)
             return True, speech_text
     return False, ""
+
+def is_complex_request(user_text: str) -> bool:
+    """
+    Проверяет, содержит ли фраза составные команды.
+    Если да — возвращает True, заставляя систему передать управление LLM.
+    """
+    text = user_text.lower().strip()
+    # Если в запросе есть связующие союзы или знаки препинания
+    complex_markers = [",", " и потом", " а потом", " затем", " после чего", " а также"]
+    if any(marker in text for marker in complex_markers):
+        return True
+        
+    # Считаем количество глаголов действий во фразе
+    all_verbs = LAUNCH_VERBS + CLOSE_VERBS + ["сделай", "поставь", "установи", "сверни", "закрой"]
+    verb_count = sum(1 for verb in all_verbs if f" {verb} " in f" {text} ")
+    if verb_count > 1:
+        return True
+        
+    return False
+
+def determine_model_by_complexity(user_text: str, has_image: bool, needs_tools: bool) -> str:
+    """
+    Анализирует запрос и выбирает оптимальную по соотношению скорость/интеллект модель.
+    """
+    from core.config import MODEL_CV_BASE, MODEL_BASIC_TOOLS, MODEL_COMPLEX_TOOLS
+    
+    # Уровень 1: Базовые вопросы, обычный чат или анализ экрана (CV) -> Llama 4 Scout
+    if has_image or not needs_tools:
+        return MODEL_CV_BASE
+        
+    # Уровень 3: Многоступенчатый тул-коллинг (сложные составные запросы) -> GPT OSS 120B
+    if is_complex_request(user_text):
+        return MODEL_COMPLEX_TOOLS
+        
+    # Уровень 2: Базовый одиночный тул-коллинг -> GPT OSS 20B
+    return MODEL_BASIC_TOOLS

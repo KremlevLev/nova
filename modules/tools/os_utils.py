@@ -133,12 +133,12 @@ def close_application(app_name: str) -> str:
 
 def change_volume(action: str) -> str:
     """
-    Регулирует системную громкость.
-    Принимает значения: 'up', 'down', 'mute' или конкретные цифры от '0' до '100'.
+    Устойчивый регулятор громкости. 
+    Распознает 'up', 'down', 'mute', а также числа с процентами ('30%', 'set 45', '+10').
     """
     action_clean = str(action).lower().strip()
     
-    if action_clean in ["mute", "unmute", "выключить", "включить"]:
+    if action_clean in ["mute", "unmute", "выключить", "включить", "выключи", "включи"]:
         pyautogui.press("volumemute")
         return "Звук переключен."
     elif action_clean in ["up", "громче", "увеличить"]:
@@ -150,25 +150,35 @@ def change_volume(action: str) -> str:
             pyautogui.press("volumedown")
         return "Громкость уменьшена."
         
-    # Обработка установки точного значения (например, "50")
-    try:
-        target_level = int(action_clean)
-        target_level = max(0, min(100, target_level))
+    # Вытаскиваем из текста только цифры и знаки изменения (+ / -)
+    numeric_part = "".join([c for c in action_clean if c.isdigit() or c in ['+', '-']])
+    if not numeric_part:
+        return "Ошибка: Не удалось извлечь числовой уровень громкости."
         
-        # Сбрасываем громкость в 0 (каждое нажатие уменьшает на 2%, 50 нажатий гарантируют минимум)
-        for _ in range(50):
-            pyautogui.press('volumedown')
-            
-        # Поднимаем громкость до нужного шага (каждое нажатие volumeup поднимает на 2%)
-        steps = target_level // 2
-        for _ in range(steps):
-            pyautogui.press('volumeup')
-            
-        return f"Громкость установлена на {target_level}%."
+    try:
+        if numeric_part.startswith('+') or numeric_part.startswith('-'):
+            # Относительное изменение (например, "+15" или "-10")
+            val = int(numeric_part)
+            steps = abs(val) // 2
+            key = 'volumeup' if val > 0 else 'volumedown'
+            for _ in range(steps):
+                pyautogui.press(key)
+            return f"Громкость изменена на {numeric_part}%."
+        else:
+            # Абсолютное изменение (например, "30" из "30%" или "set 30")
+            target_level = max(0, min(100, int(numeric_part)))
+            # Сброс в 0
+            for _ in range(50):
+                pyautogui.press('volumedown')
+            # Подъем до нужного шага (1 нажатие = +2%)
+            steps = target_level // 2
+            for _ in range(steps):
+                pyautogui.press('volumeup')
+            return f"Установлена громкость {target_level}%."
     except ValueError:
         pass
         
-    return "Ошибка: Неизвестная команда для звука."
+    return "Ошибка: Не удалось распознать формат громкости."
 
 def open_website(url_or_query: str) -> str:
     if "." in url_or_query and " " not in url_or_query:

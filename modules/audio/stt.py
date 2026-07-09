@@ -110,7 +110,7 @@ class VoiceListener:
                     "language": "ru",
                     "temperature": "0.0"
                 }
-                response = requests.post(url, headers=headers, files=files, data=data, timeout=8.0)
+                response = requests.post(url, headers=headers, files=files, data=data, timeout=60.0)
             
             if response.status_code == 200:
                 text = response.json().get("text", "").strip()
