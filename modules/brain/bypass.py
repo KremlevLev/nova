@@ -13,31 +13,82 @@ CLOSE_VERBS = [
     "закрой", "закрыть", "закрывай", "закрываю", "закрыл",
     "прибей", "прибить", "убей", "убить", "заверши", "завершить"
 ]
+all_verbs = (
+    set(LAUNCH_VERBS)
+    | set(CLOSE_VERBS)
+    | {
+        "сделай",
+        "поставь",
+        "установи",
+        "сверни",
+    }
+)
 
 # Быстрый Regex Bypass (время, системная громкость, окна)
 FAST_COMMAND_PATTERNS = [
-    # 1. Изменение громкости на конкретное число (например, "звук на 40", "громкость 80")
-    (re.compile(r'\b(?:установи|сделай|поставь)?\s*(?:громкость|звук)\s*(?:на\s+)?(\d+)\b', re.IGNORECASE),
-     lambda m: (change_volume(m.group(1)), f"Громкость установлена на {m.group(1)}%.")),
-     
-    # 2. Относительное изменение громкости
-    (re.compile(r'\b(сделай|убавь|потише|тише|уменьши громкость)\b', re.IGNORECASE), 
-     lambda m: (change_volume("down"), "Громкость уменьшена.")),
-    (re.compile(r'\b(громче|прибавь|сделай громче|увеличь громкость)\b', re.IGNORECASE), 
-     lambda m: (change_volume("up"), "Громкость увеличена.")),
-    (re.compile(r'\b(выключи звук|включи звук|муте|мьют)\b', re.IGNORECASE), 
-     lambda m: (change_volume("mute"), "Состояние звука изменено.")),
-     
-    # 3. Точное время
-    (re.compile(r'\b(сколько времени|который час|время|точное время)\b', re.IGNORECASE), 
-     lambda m: (None, get_current_time())),
-     
-    # 4. Управление окнами
-    (re.compile(r'\bсверни\s+(все\s+)?окна\b', re.IGNORECASE), 
-     lambda m: (manage_windows("minimize_all"), "Сворачиваю окна.")),
-    (re.compile(r'\bзакрыв(ай|аем|ить)\s+окно\b', re.IGNORECASE), 
-     lambda m: (manage_windows("close_current"), "Закрываю активное окно.")),
+    (
+        re.compile(
+            r"\b(?:установи|сделай|поставь)?\s*"
+            r"(?:громкость|звук)\s*(?:на\s+)?"
+            r"(\d{1,3})\b",
+            re.IGNORECASE,
+        ),
+        lambda match: change_volume(match.group(1)),
+    ),
+    (
+        re.compile(
+            r"\b(?:"
+            r"сделай\s+(?:звук|громкость)\s+тише|"
+            r"убавь\s+(?:звук|громкость)?|"
+            r"потише|тише|уменьши\s+громкость"
+            r")\b",
+            re.IGNORECASE,
+        ),
+        lambda match: change_volume("down"),
+    ),
+    (
+        re.compile(
+            r"\b(?:"
+            r"сделай\s+(?:звук|громкость)\s+громче|"
+            r"прибавь\s+(?:звук|громкость)?|"
+            r"громче|увеличь\s+громкость"
+            r")\b",
+            re.IGNORECASE,
+        ),
+        lambda match: change_volume("up"),
+    ),
+    (
+        re.compile(
+            r"\b(?:выключи звук|включи звук|муте|мьют)\b",
+            re.IGNORECASE,
+        ),
+        lambda match: change_volume("mute"),
+    ),
+    (
+        re.compile(
+            r"\b(?:сколько времени|который час|"
+            r"точное время)\b",
+            re.IGNORECASE,
+        ),
+        lambda match: get_current_time(),
+    ),
+    (
+        re.compile(
+            r"\bсверни\s+(?:все\s+)?окна\b",
+            re.IGNORECASE,
+        ),
+        lambda match: manage_windows("minimize_all"),
+    ),
+    (
+        re.compile(
+            r"\bзакр(?:ой|ывай|ыть)\s+"
+            r"(?:активное\s+)?окно\b",
+            re.IGNORECASE,
+        ),
+        lambda match: manage_windows("close_current"),
+    ),
 ]
+
 
 def check_instant_app_launch(user_text: str, app_launcher) -> tuple[bool, str]:
     """Мгновенно находит и запускает ярлык в обход нейросети"""
@@ -69,16 +120,21 @@ def check_instant_app_close(user_text: str) -> tuple[bool, str]:
                 return True, message
     return False, ""
 
-def check_fast_commands(user_text: str) -> tuple[bool, str]:
-    """Проверяет фразы на соответствие быстрым системным паттернам"""
+def check_fast_commands(
+    user_text: str,
+) -> tuple[bool, str]:
     if is_complex_request(user_text):
         return False, ""
+
     for pattern, action in FAST_COMMAND_PATTERNS:
         match = pattern.search(user_text)
+
         if match:
-            _, speech_text = action(match)
-            return True, speech_text
+            actual_result = action(match)
+            return True, str(actual_result)
+
     return False, ""
+
 
 def is_complex_request(user_text: str) -> bool:
     """

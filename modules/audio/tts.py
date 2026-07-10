@@ -129,7 +129,14 @@ def is_inside_xml_block(text: str, allowed_tool_names: list[str]) -> bool:
 
 def clean_text_for_speech(text: str, allowed_tool_names: list[str]) -> str:
     cleaned = text
-    cleaned = re.sub(r'<function=\w+>.*?</`function>', '', cleaned, flags=re.DOTALL)
+    cleaned = re.sub(
+    r"<function=\w+>.*?</function>",
+    "",
+    cleaned,
+    flags=re.DOTALL,
+    )
+
+
     for func_name in allowed_tool_names:
         pattern = re.compile(rf'<{func_name}>.*?</{func_name}>', re.DOTALL)
         cleaned = pattern.sub('', cleaned)
@@ -213,20 +220,35 @@ TECH_GLOSSARY = {
     "github": "гитхаб",
     "api": "апи",
     "json": "джейсон",
-    "xml": "экс эм эль",
+    "xml": "икс эм эль",
     "windows": "виндовс",
     "os": "о эс",
-    "cpu": "процессор",
+    "cpu": "цэпэу",
     "ram": "память",
-    "gpu": "видеокарта",
+    "gpu": "гэпэу",
     "cmd": "командная строка",
     "terminal": "терминал",
     "main": "мейн",
     "test": "тест",
-    "py": "пи уай",
+    "py": "пай",
     "y": "игрек",
     "x": "икс",
     "metrics": "метрикс",
+    ".": "точка",
+    ",": "запятая",
+    "kubernetes": "кубернетс",
+    "docker": "докер",
+    "tensorflow": "тэнсорфлоу",
+    "executor": "экзекутор",
+    "pycache": "пайкэш",
+    "init":"инит",
+    "overlay":"оверлэй",
+    "gitignore":"гитигнор", 
+    "md":"эмдэ",
+    "txt":"тииксти",
+    "ctrl": "контрл",
+    "shift": "шифт",
+    "space": "cпэйс"
 }
 
 def transliterate_word(word: str) -> str:

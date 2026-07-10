@@ -13,7 +13,7 @@ execute_cmd_tool = {"type": "function", "function": {"name": "execute_cmd_comman
 manage_media_tool = {"type": "function", "function": {"name": "manage_media", "description": "Управление музыкой и видео.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "description": "'play_pause', 'next', 'prev'"}}, "required": ["action"]}}}
 manage_windows_tool = {"type": "function", "function": {"name": "manage_windows", "description": "Управление окнами Windows.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "description": "'minimize_all' или 'close_current'"}}, "required": ["action"]}}}
 create_note_tool = {"type": "function", "function": {"name": "create_quick_note", "description": "Сохраняет текст/идею/напоминание в текстовый файл на рабочем столе.", "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}}
-set_timer_tool = {"type": "function", "function": {"name": "set_timer", "description": "Устанавливает таймер на заданное количество минут.", "parameters": {"type": "object", "properties": {"minutes": {"type": "integer"}}, "required": ["minutes"]}}}
+set_timer_tool = {"type": "function", "function": {"name": "set_timer", "description": "Устанавливает таймер на заданное количество минут.", "parameters": {"type": "object", "minutes": {"type": "integer","minimum": 1,"maximum": 10080, "required": ["minutes"]}}}}
 
 control_smart_home_tool = {
     "type": "function",
@@ -125,8 +125,16 @@ mouse_click_tool = {
         "parameters": {
             "type": "object",
             "properties": {
-                "x": {"type": "integer", "description": "Координата X на экране (в пикселях)."},
-                "y": {"type": "integer", "description": "Координата Y на экране (в пикселях)."},
+                "x": {
+                    "type": "integer",
+                    "minimum": -20000,
+                    "maximum": 20000
+                },
+                "y": {
+                    "type": "integer",
+                    "minimum": -20000,
+                    "maximum": 20000
+                },
                 "click_type": {"type": "string", "enum": ["single", "double", "right"], "description": "Тип нажатия (single - обычный, double - двойной, right - правый)."}
             },
             "required": ["x", "y"]
@@ -159,20 +167,19 @@ create_project_tool = {
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Имя корневой папки проекта на Рабочем столе (например, 'fastapi_kubernetes_app')."
+                    "minLength": 1,
+                    "maxLength": 100
                 },
                 "files": {
                     "type": "array",
-                    "description": "Список всех файлов проекта с их относительными путями и кодом.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "Относительный путь к файлу (например, 'app/main.py', 'Dockerfile', 'k8s/deployment.yaml')."},
-                            "content": {"type": "string", "description": "Полный исходный код или текстовое содержимое файла."}
-                        },
-                        "required": ["path", "content"]
-                    }
+                    "minItems": 1,
+                    "maxItems": 200,
+                },
+                "content": {
+                    "type": "string",
+                    "maxLength": 500000,
                 }
+
             },
             "required": ["project_name", "files"]
         }
@@ -228,7 +235,85 @@ run_terminal_tool = {
             "properties": {
                 "command": {"type": "string", "description": "Полный текст консольной команды."}
             },
+                        },
             "required": ["command"]
+        }
+    }
+
+scrape_webpage_tool = {
+    "type": "function",
+    "function": {
+        "name": "scrape_webpage",
+        "description": "Загружает веб-страницу по URL и извлекает из неё чистый текст. Используйте для подробного чтения статей, руководств и документации из интернета.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Полный адрес страницы, например: 'https://docs.pytest.org/'"}
+            },
+            "required": ["url"]
+        }
+    }
+}
+
+get_clipboard_tool = {
+    "type": "function",
+    "function": {
+        "name": "get_clipboard_content",
+        "description": "Возвращает текущий скопированный пользователем текст из буфера обмена Windows. Используйте, чтобы проанализировать логи ошибок или куски кода, скопированные пользователем.",
+        "parameters": {"type": "object", "properties": {}}
+    }
+}
+
+set_clipboard_tool = {
+    "type": "function",
+    "function": {
+        "name": "set_clipboard_content",
+        "description": "Копирует указанный текст в буфер обмена Windows пользователя.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Текст, который нужно положить в буфер обмена."}
+            },
+            "required": ["text"]
+        }
+    }
+}
+
+run_terminal_tool = {
+    "type": "function",
+    "function": {
+        "name": "run_terminal_command",
+        "description": "Выполняет консольную команду (CMD) в системе Windows в скрытом фоновом режиме и возвращает текстовый ответ. Позволяет проверять статус Git, запускать тесты, устанавливать библиотеки через pip. Требует подтверждения пользователя.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Полный текст консольной команды."}
+            },
+            "required": ["command"]
+        }
+    }
+}
+
+list_windows_tool = {
+    "type": "function",
+    "function": {
+        "name": "list_active_windows",
+        "description": "Возвращает список заголовков всех открытых и видимых приложений (окон) на экране пользователя.",
+        "parameters": {"type": "object", "properties": {}}
+    }
+}
+
+focus_window_tool = {
+    "type": "function",
+    "function": {
+        "name": "focus_window",
+        "description": "Принудительно выводит окно указанной программы на передний план (наводит фокус). Используйте перед набором текста, чтобы убедиться, что текст запишется в правильное приложение.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "window_title_part": {"type": "string", "description": "Часть заголовка или имя программы (например: 'discord', 'visual studio', 'telegram')."}
+            },
+            "required": ["window_title_part"]
         }
     }
 }
@@ -261,5 +346,17 @@ ALL_TOOLS = [
     list_reminders_tool, 
     execute_python_tool, 
     mouse_click_tool, 
-    press_hotkey_tool
+    press_hotkey_tool,
+    list_windows_tool,
+    focus_window_tool
 ]
+
+for tool in ALL_TOOLS:
+    parameters = tool["function"].setdefault(
+        "parameters",
+        {
+            "type": "object",
+            "properties": {},
+        },
+    )
+    parameters.setdefault("additionalProperties", False)

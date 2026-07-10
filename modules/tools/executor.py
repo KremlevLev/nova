@@ -6,6 +6,7 @@ import ctypes
 import logging
 import pyautogui
 import os
+from pathlib import Path
 
 logger = logging.getLogger("Executor")
 
@@ -58,22 +59,30 @@ def check_dangerous_patterns(code: str) -> tuple[bool, str]:
     return True, "Базовые проверки безопасности пройдены."
 
 def execute_python_code(code: str) -> str:
-    """
-    Выполняет произвольный Python-код в контролируемом контексте с перехватом вывода.
-    Каждый вызов проходит через процедуру Human-in-the-Loop.
-    """
-    logger.info("Получен запрос на выполнение динамического Python-кода.")
-    
-    # 1. Быстрый автоматический аудит безопасности
+    logger.info("Запрос на выполнение динамического Python-кода.")
+
     is_safe, check_msg = check_dangerous_patterns(code)
-    
-    # 2. Интерактивное подтверждение пользователя (HITL)
-    details = f"Действие: Выполнение Python-кода (REPL)\nАнализ кода: {check_msg}\n\nКод для запуска:\n---\n{code}\n---"
-    allowed = prompt_hitl_permission("Выполнение кода (REPL)", details)
-    
-    if not allowed:
-        return "Отклонено: Пользователь заблокировал выполнение этого скрипта."
-        
+
+    if not is_safe:
+        return (
+            "Ошибка: Выполнение заблокировано системой безопасности. "
+            f"{check_msg}"
+        )
+
+    details = (
+        "Действие: Выполнение Python-кода\n"
+        f"Анализ кода: {check_msg}\n\n"
+        f"Код для запуска:\n---\n{code}\n---"
+    )
+
+    if not prompt_hitl_permission(
+        "Выполнение кода",
+        details,
+    ):
+        return (
+            "Отклонено: Пользователь заблокировал выполнение "
+            "этого скрипта."
+        )
     # 3. Перехват стандартных потоков вывода
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -144,9 +153,16 @@ def create_workspace_project(project_name: str, files: list) -> str:
     """
     import os
     try:
-        desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
-        project_dir = os.path.normpath(os.path.join(desktop, project_name))
-        
+        desktop = Path(os.environ["USERPROFILE"]) / "Desktop"
+
+        if not project_name.strip():
+            return "Ошибка: Имя проекта пусто."
+        if Path(project_name).is_absolute() or ".." in Path(project_name).parts:
+            return "Ошибка: Недопустимое имя проекта."
+        project_dir = _safe_project_path(
+            desktop,
+            project_name.strip(),
+            )
         # Формируем список файлов для окна подтверждения безопасности
         file_list = "\n".join([f"- {f.get('path')}" for f in files if f.get('path')])
         details = (
@@ -165,11 +181,36 @@ def create_workspace_project(project_name: str, files: list) -> str:
             content = file_data.get("content", "")
             if not rel_path:
                 continue
-                
-            # Нормализуем пути под Windows
-            clean_rel_path = os.path.normpath(rel_path)
-            full_file_path = os.path.normpath(os.path.join(project_dir, clean_rel_path))
             
+            # Нормализуем пути под Windows
+            full_file_path = _safe_project_path(
+            project_dir,
+            rel_path,
+            )
+
+            full_file_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+            )
+
+            with full_file_path.open(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            ) as file:
+                file.write(content)
+            
+            if len(files) > 200:
+                return "Ошибка: За один вызов разрешено создать не более 200 файлов."
+
+            total_size = sum(
+                len(str(item.get("content", "")).encode("utf-8"))
+                for item in files
+            )
+
+            if total_size > 10 * 1024 * 1024:
+                return "Ошибка: Общий размер проекта превышает 10 МБ."
+
             # Создаем все промежуточные директории
             os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
             
@@ -185,3 +226,29 @@ def create_workspace_project(project_name: str, files: list) -> str:
         return f"Проект '{project_name}' успешно создан на Рабочем столе. Записано файлов: {created_count}. Папка открыта."
     except Exception as e:
         return f"Не удалось создать проект: {e}"
+    
+def _safe_project_path(
+    project_root: Path,
+    relative_path: str,
+) -> Path:
+    candidate_path = Path(relative_path)
+
+    if candidate_path.is_absolute():
+        raise ValueError("Абсолютные пути запрещены.")
+
+    if ".." in candidate_path.parts:
+        raise ValueError("Выход за пределы проекта запрещен.")
+
+    resolved_root = project_root.resolve()
+    resolved_target = (
+        resolved_root / candidate_path
+    ).resolve()
+
+    try:
+        resolved_target.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(
+            "Путь выходит за пределы проекта."
+        ) from exc
+
+    return resolved_target

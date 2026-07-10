@@ -28,11 +28,21 @@ class LocalMemory(BaseMemory):
 
     def _tokenize(self, text: str) -> List[str]:
         """Очищает текст, выделяет слова и делает простейший русский стемминг (срез окончаний)"""
-        words = re.findall(r'\b[a-zA-Zа-яА-Я0-9]{3,}\b', text.lower())
+        words = re.findall(
+        r"[a-zA-Zа-яА-ЯёЁ0-9]{2,}",
+        text.lower(),
+        )
+
         stemmed = []
         for w in words:
             # Базовые правила отсечения типичных окончаний для повышения точности сопоставлений
-            w_stem = re.sub(r'(?:ий|ов|ами|ям|ом|ему|ого|ое|ая|их|ых|ую|ть|ся|ти|ок|ек|а|e|и|о|у|ы|я|ь)$', '', w)
+            w_stem = re.sub(
+            r"(?:ий|ов|ами|ям|ом|ему|ого|ое|ая|их|ых|"
+            r"ую|ть|ся|ти|ок|ек|а|е|и|о|у|ы|я|ь)$",
+            "",
+            w,
+            )
+
             stemmed.append(w_stem if len(w_stem) >= 2 else w)
         return stemmed
 
@@ -76,7 +86,7 @@ class LocalMemory(BaseMemory):
         if not self.documents or not query.strip():
             return []
             
-        query_tokens = self._tokenize(query)
+        query_tokens = list(dict.fromkeys(self._tokenize(query)))
         if not query_tokens:
             return []
 
@@ -89,7 +99,11 @@ class LocalMemory(BaseMemory):
 
         # Средняя длина документа
         lengths = [len(self._tokenize(doc["text"])) for doc in self.documents]
-        avg_dl = sum(lengths) / N if N > 0 else 1.0
+        avg_dl = max(
+            sum(lengths) / N if N > 0 else 1.0,
+            1.0,
+        )
+
 
         # Параметры BM25
         k1 = 1.2

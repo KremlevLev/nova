@@ -1,128 +1,732 @@
 # modules/audio/stt.py
-import os
-import wave
+from __future__ import annotations
+import re
 import logging
-import numpy as np
-import sounddevice as sd
-import requests
-from core.config import GROQ_API_KEY
+import os
+import tempfile
+import time
+import wave
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
 
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+import numpy as np
+import requests
+import sounddevice as sd
+
+from core.config import GROQ_API_KEYS
+
+
 logger = logging.getLogger("STT")
 
-# Известные галлюцинации Whisper при обработке фонового шума или тишины
+
 WHISPER_HALLUCINATIONS = {
-    "спасибо", "спасибо.", "спасибо за внимание", "продолжение следует",
-    "минут", "вы", "я", "пожалуйста", "пожалуйста.", "просмотр", 
-    "субтитры", "продолжение", "спасибо за просмотр"
+    "спасибо",
+    "спасибо.",
+    "спасибо за внимание",
+    "спасибо за просмотр",
+    "продолжение следует",
+    "минут",
+    "вы",
+    "я",
+    "пожалуйста",
+    "пожалуйста.",
+    "просмотр",
+    "субтитры",
+    "продолжение",
 }
 
+KNOWN_APPLICATION_NAMES = (
+    "obsidian",
+    "обсидиан",
+    "discord",
+    "дискорд",
+    "telegram",
+    "телеграм",
+    "chrome",
+    "хром",
+    "visual studio code",
+    "вс код",
+    "блокнот",
+    "калькулятор",
+    "проводник",
+)
+
+
+def normalize_voice_command(text: str) -> str:
+    """
+    Исправляет только характерные ошибки Whisper в начале команды.
+
+    Коррекция применяется лишь при наличии известного приложения,
+    чтобы обычный вопрос «какие клавиши Obsidian» не превратился
+    в команду запуска.
+    """
+    clean = re.sub(r"\s+", " ", text.strip())
+    lowered = clean.lower().replace("ё", "е")
+
+    contains_known_application = any(
+        app_name in lowered
+        for app_name in KNOWN_APPLICATION_NAMES
+    )
+
+    if not contains_known_application:
+        return clean
+
+    command_corrections = (
+        (r"^\s*ключи\s+", "Включи "),
+        (r"^\s*в ключи\s+", "Включи "),
+        (r"^\s*включить\s+", "Включи "),
+        (r"^\s*откройте\s+", "Открой "),
+        (r"^\s*запустим\s+", "Запусти "),
+    )
+
+    for pattern, replacement in command_corrections:
+        if re.search(pattern, lowered, flags=re.IGNORECASE):
+            corrected = re.sub(
+                pattern,
+                replacement,
+                clean,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+            logger.info(
+                "Команда STT скорректирована: %r -> %r",
+                clean,
+                corrected,
+            )
+            return corrected
+
+    return clean
+
+
+@dataclass(slots=True)
+class TranscriptionAttempt:
+    success: bool
+    text: str = ""
+    error: str = ""
+    status_code: int | None = None
+    retryable: bool = False
+
+
 class VoiceListener:
-    def __init__(self):
-        logger.info("Инициализация захвата звука (Уши)...")
-        if not GROQ_API_KEY:
-            logger.warning("Критическая ошибка: GROQ_API_KEY не обнаружен в конфигурации!")
-            
+    def __init__(
+        self,
+        input_device: int | str | None = None,
+    ) -> None:
+        logger.info("Инициализация захвата звука.")
+
         self.sample_rate = 16000
-        self.block_size = 2048
-        self.silence_duration = 1.2  # Время ожидания тишины перед отправкой
-        self.energy_threshold = None  # Базовое значение порога
-        logger.info("Система аудиозахвата готова. Инференс: Groq API (whisper-large-v3)")
+        self.block_size = 1024
 
-    def _get_rms(self, data):
-        return np.sqrt(np.mean(np.square(data.astype(np.float32) / 32768.0)))
+        # После окончания речи ждем примерно 1,2 секунды тишины.
+        self.silence_duration = 1.2
 
-    def listen(self, should_abort=None) -> str:
-        with sd.InputStream(samplerate=self.sample_rate, channels=1, blocksize=self.block_size, dtype='int16') as stream:
-            
-            # ОТКАЗОУСТОЙЧИВАЯ ОДНОКРАТНАЯ КАЛИБРОВКА:
-            if not hasattr(self, 'energy_threshold') or self.energy_threshold is None:
-                print("\n[🎤] Калибровка фона (выполняется один раз при запуске)...")
-                bg_rms_list = []
-                for _ in range(int(self.sample_rate / self.block_size)):
-                    data, overflow = stream.read(self.block_size)
-                    bg_rms_list.append(self._get_rms(data))
-                
-                self.energy_threshold = np.mean(bg_rms_list) * 2.5
-                if self.energy_threshold < 0.012:
-                    self.energy_threshold = 0.012
-                print(f"[🎤] Калибровка завершена. Базовый порог RMS VAD: {self.energy_threshold:.4f}")
-            
-            print(f"[🎤] Слушаю (порог RMS VAD: {self.energy_threshold:.4f})...")
-            audio_buffer = []
+        # Речь короче 0,18 секунды считаем шумом.
+        self.minimum_speech_duration = 0.18
+
+        # Одна запись не может продолжаться дольше 60 секунд.
+        self.maximum_recording_duration = 60.0
+
+        # До начала речи сохраняем 0,8 секунды звука.
+        self.pre_roll_duration = 0.8
+
+        self.input_device = input_device
+        self.energy_threshold: float | None = None
+        self.noise_floor: float = 0.0
+
+        self._preferred_key_index = 0
+        self._key_cooldowns: dict[int, float] = {}
+
+        if not GROQ_API_KEYS:
+            logger.warning(
+                "Groq API-ключи отсутствуют. "
+                "Запись будет работать, но транскрипция недоступна."
+            )
+
+        self._log_audio_device()
+
+    def _log_audio_device(self) -> None:
+        try:
+            if self.input_device is None:
+                default_input = sd.default.device[0]
+                device_info = sd.query_devices(
+                    default_input,
+                    "input",
+                )
+                logger.info(
+                    "Используется микрофон: index=%s, name=%s, "
+                    "channels=%s, default_samplerate=%s",
+                    default_input,
+                    device_info.get("name"),
+                    device_info.get("max_input_channels"),
+                    device_info.get("default_samplerate"),
+                )
+            else:
+                device_info = sd.query_devices(
+                    self.input_device,
+                    "input",
+                )
+                logger.info(
+                    "Используется выбранный микрофон: %s",
+                    device_info.get("name"),
+                )
+        except Exception:
+            logger.exception(
+                "Не удалось определить аудиоустройство."
+            )
+
+    @staticmethod
+    def list_input_devices() -> list[dict]:
+        devices: list[dict] = []
+
+        for index, device in enumerate(sd.query_devices()):
+            if int(device.get("max_input_channels", 0)) <= 0:
+                continue
+
+            devices.append(
+                {
+                    "index": index,
+                    "name": device.get("name"),
+                    "channels": device.get(
+                        "max_input_channels"
+                    ),
+                    "sample_rate": device.get(
+                        "default_samplerate"
+                    ),
+                }
+            )
+
+        return devices
+
+    @staticmethod
+    def _get_rms(data: np.ndarray) -> float:
+        samples = data.astype(np.float32) / 32768.0
+        return float(np.sqrt(np.mean(np.square(samples))))
+
+    def _calibrate(
+        self,
+        stream: sd.InputStream,
+        should_abort: Callable[[], bool] | None,
+    ) -> bool:
+        # Даем колонкам и звуковому драйверу затихнуть после TTS.
+        time.sleep(0.8)
+
+        print(
+            "\n[🎤] Калибровка фона. "
+            "Пожалуйста, не говорите одну секунду..."
+        )
+
+
+        rms_values: list[float] = []
+        calibration_blocks = max(
+            1,
+            int(self.sample_rate / self.block_size),
+        )
+
+        for _ in range(calibration_blocks):
+            if should_abort and should_abort():
+                return False
+
+            data, overflowed = stream.read(self.block_size)
+
+            if overflowed:
+                logger.warning(
+                    "Переполнение аудиобуфера во время калибровки."
+                )
+
+            rms_values.append(self._get_rms(data))
+
+        self.noise_floor = float(
+            np.percentile(rms_values, 75)
+        )
+
+        # Порог адаптируется к фону, но не становится чрезмерно высоким.
+        self.energy_threshold = max(
+        0.006,
+        min(0.045, self.noise_floor * 1.45 + 0.0015),
+)
+
+
+        print(
+            "[🎤] Калибровка завершена. "
+            f"Шум: {self.noise_floor:.4f}; "
+            f"порог речи: {self.energy_threshold:.4f}"
+        )
+
+        return True
+
+    def _update_noise_floor(self, rms: float) -> None:
+        """
+        Медленно адаптирует фон, только пока пользователь не говорит.
+        """
+        self.noise_floor = (
+            self.noise_floor * 0.995
+            + rms * 0.005
+        )
+
+        adaptive_threshold = (
+            self.noise_floor * 1.45 + 0.0015
+        )
+
+        self.energy_threshold = max(
+            0.006,
+            min(0.045, adaptive_threshold),
+        )
+
+
+
+    def _record(
+        self,
+        should_abort: Callable[[], bool] | None,
+    ) -> np.ndarray | None:
+        stream_kwargs = {
+            "samplerate": self.sample_rate,
+            "channels": 1,
+            "blocksize": self.block_size,
+            "dtype": "int16",
+        }
+
+        if self.input_device is not None:
+            stream_kwargs["device"] = self.input_device
+
+        with sd.InputStream(**stream_kwargs) as stream:
+            if self.energy_threshold is None:
+                calibrated = self._calibrate(
+                    stream,
+                    should_abort,
+                )
+
+                if not calibrated:
+                    return None
+
+            assert self.energy_threshold is not None
+
+            print(
+                "[🎤] Слушаю "
+                f"(порог RMS VAD: {self.energy_threshold:.4f})..."
+            )
+
+            pre_roll_blocks = max(
+                1,
+                int(
+                    self.pre_roll_duration
+                    * self.sample_rate
+                    / self.block_size
+                ),
+            )
+
+            silence_limit_blocks = max(
+                1,
+                int(
+                    self.silence_duration
+                    * self.sample_rate
+                    / self.block_size
+                ),
+            )
+
+            maximum_blocks = max(
+                1,
+                int(
+                    self.maximum_recording_duration
+                    * self.sample_rate
+                    / self.block_size
+                ),
+            )
+
+            minimum_active_blocks = max(
+                1,
+                int(
+                    self.minimum_speech_duration
+                    * self.sample_rate
+                    / self.block_size
+                ),
+            )
+
+            pre_roll: list[np.ndarray] = []
+            audio_buffer: list[np.ndarray] = []
+
             started_speaking = False
-            max_silence_chunks = int((self.silence_duration * self.sample_rate) / self.block_size)
-            silence_chunks = 0
-            active_blocks_count = 0  
-            
+            silence_blocks = 0
+            active_blocks = 0
+            peak_rms = 0.0
+
             while True:
-                # МГНОВЕННЫЙ ВЫХОД: если хоткей перевел ассистента в сон, закрываем поток за 128мс
                 if should_abort and should_abort():
-                    logger.debug("[STT] Запись остановлена: ассистент переведен в режим сна.")
-                    return ""
-                
-                data, overflow = stream.read(self.block_size)
+                    logger.debug(
+                        "Запись отменена внешним сигналом."
+                    )
+                    return None
+
+                data, overflowed = stream.read(
+                    self.block_size
+                )
+
+                if overflowed:
+                    logger.warning(
+                        "Переполнение входного аудиобуфера."
+                    )
+
                 rms = self._get_rms(data)
-                
-                if rms > self.energy_threshold:
-                    started_speaking = True
-                    silence_chunks = 0
-                    active_blocks_count += 1
-                    audio_buffer.append(data)
+                peak_rms = max(peak_rms, rms)
+
+                if not started_speaking:
+                    pre_roll.append(data.copy())
+
+                    if len(pre_roll) > pre_roll_blocks:
+                        pre_roll.pop(0)
+
+                    self._update_noise_floor(rms)
+
+                # Для продолжения речи используем немного меньший порог.
+                start_threshold = self.energy_threshold
+                continue_threshold = (
+                    self.energy_threshold * 0.65
+                )
+
+                is_voice = (
+                    rms > (
+                        continue_threshold
+                        if started_speaking
+                        else start_threshold
+                    )
+                )
+
+                if is_voice:
+                    if not started_speaking:
+                        started_speaking = True
+                        audio_buffer.extend(pre_roll)
+                        logger.info(
+                            "VAD обнаружил начало речи: "
+                            "rms=%.4f threshold=%.4f",
+                            rms,
+                            self.energy_threshold,
+                        )
+
+                    active_blocks += 1
+                    silence_blocks = 0
+                    audio_buffer.append(data.copy())
+
                 elif started_speaking:
-                    silence_chunks += 1
-                    audio_buffer.append(data)
-                    if silence_chunks > max_silence_chunks:
+                    silence_blocks += 1
+                    audio_buffer.append(data.copy())
+
+                    if silence_blocks >= silence_limit_blocks:
                         break
-                else:
-                    audio_buffer.append(data)
-                    if len(audio_buffer) > int((0.5 * self.sample_rate) / self.block_size):
-                        audio_buffer.pop(0)
 
-        # Дополнительная проверка на случай, если прерывание произошло на выходе из контекста
-        if should_abort and should_abort():
-            return ""
+                if (
+                    started_speaking
+                    and len(audio_buffer) >= maximum_blocks
+                ):
+                    logger.info(
+                        "Достигнут лимит записи 60 секунд."
+                    )
+                    break
 
-        # ЛОКАЛЬНАЯ ФИЛЬТРАЦИЯ ШУМОВЫХ ВСПЛЕСКОВ (<256 мс)
-        if active_blocks_count < 2:
-            logger.debug(f"[STT Skip] Отклонен короткий шум ({active_blocks_count} блоков VAD).")
-            return ""
+            logger.info(
+                "Запись завершена: active_blocks=%s, "
+                "minimum=%s, peak_rms=%.4f, threshold=%.4f, "
+                "total_blocks=%s",
+                active_blocks,
+                minimum_active_blocks,
+                peak_rms,
+                self.energy_threshold,
+                len(audio_buffer),
+            )
 
-        temp_file = "data/temp_mic.wav"
-        os.makedirs("data", exist_ok=True)
-        final_audio = np.concatenate(audio_buffer)
-        with wave.open(temp_file, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(self.sample_rate)
-            wf.writeframes(final_audio.tobytes())
-            
-        if not GROQ_API_KEY:
-            return ""
+            if active_blocks < minimum_active_blocks:
+                logger.warning(
+                    "Речь отклонена как слишком короткая: "
+                    "active_blocks=%s, minimum=%s, peak=%.4f",
+                    active_blocks,
+                    minimum_active_blocks,
+                    peak_rms,
+                )
+                return None
+
+            if not audio_buffer:
+                return None
+
+            return np.concatenate(
+                audio_buffer,
+                axis=0,
+            )
+
+    def _ordered_key_indices(self) -> list[int]:
+        if not GROQ_API_KEYS:
+            return []
+
+        count = len(GROQ_API_KEYS)
+        preferred = self._preferred_key_index % count
+
+        return list(range(preferred, count)) + list(
+            range(0, preferred)
+        )
+
+    def _transcribe_with_key(
+        self,
+        wav_path: Path,
+        key_index: int,
+    ) -> TranscriptionAttempt:
+        api_key = GROQ_API_KEYS[key_index]
 
         try:
-            url = "https://api.groq.com/openai/v1/audio/transcriptions"
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-            with open(temp_file, "rb") as f:
-                files = {"file": ("temp_mic.wav", f, "audio/wav")}
-                data = {
-                    "model": "whisper-large-v3-turbo", 
-                    "language": "ru",
-                    "temperature": "0.0"
-                }
-                response = requests.post(url, headers=headers, files=files, data=data, timeout=60.0)
-            
-            if response.status_code == 200:
-                text = response.json().get("text", "").strip()
-                if text:
-                    clean_text = text.lower().strip().rstrip(".!?")
-                    if clean_text in WHISPER_HALLUCINATIONS:
-                        logger.debug(f"[STT] Отсечена галлюцинация Whisper: '{text}'")
-                        return ""
-                    
-                    print(f"[Вы сказали]: {text}")
-                    return text
+            with wav_path.open("rb") as audio_file:
+                response = requests.post(
+                    (
+                        "https://api.groq.com/openai/v1/"
+                        "audio/transcriptions"
+                    ),
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                    },
+                    files={
+                        "file": (
+                            "nova_microphone.wav",
+                            audio_file,
+                            "audio/wav",
+                        ),
+                    },
+                    data={
+                        "model": "whisper-large-v3-turbo",
+                        "language": "ru",
+                        "temperature": "0",
+                        "prompt": (
+                            "Голосовые команды ассистенту Nova на русском языке. "
+                            "Частые команды: включи, выключи, открой, закрой, "
+                            "запусти, напиши, вставь, сохрани, сверни. "
+                            "Приложения: Obsidian, Discord, Telegram, Chrome, "
+                            "Visual Studio Code, блокнот, калькулятор, проводник."
+                        ),
+                    },
+
+                    timeout=(10.0, 90.0),
+                )
+
+        except requests.Timeout as exc:
+            return TranscriptionAttempt(
+                success=False,
+                error=f"Таймаут Groq STT: {exc}",
+                retryable=True,
+            )
+        except requests.RequestException as exc:
+            return TranscriptionAttempt(
+                success=False,
+                error=f"Ошибка соединения Groq STT: {exc}",
+                retryable=True,
+            )
+
+        if response.status_code == 200:
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                return TranscriptionAttempt(
+                    success=False,
+                    error=(
+                        "Groq STT вернул поврежденный JSON: "
+                        f"{exc}"
+                    ),
+                    status_code=200,
+                    retryable=True,
+                )
+
+            text = str(payload.get("text") or "").strip()
+
+            return TranscriptionAttempt(
+                success=True,
+                text=text,
+                status_code=200,
+            )
+
+        response_text = response.text[:1000]
+
+        return TranscriptionAttempt(
+            success=False,
+            error=(
+                f"Groq STT вернул HTTP {response.status_code}: "
+                f"{response_text}"
+            ),
+            status_code=response.status_code,
+            retryable=response.status_code in {
+                408,
+                413,
+                429,
+                500,
+                502,
+                503,
+                504,
+            },
+        )
+
+    def _transcribe(
+        self,
+        wav_path: Path,
+    ) -> str:
+        if not GROQ_API_KEYS:
+            logger.error(
+                "Транскрипция невозможна: "
+                "GROQ_API_KEYS пуст."
+            )
             return ""
-        except Exception as e:
-            logger.error(f"Ошибка Groq API STT: {e}")
+
+        now = time.monotonic()
+        attempted_keys = 0
+
+        for key_index in self._ordered_key_indices():
+            cooldown_until = self._key_cooldowns.get(
+                key_index,
+                0.0,
+            )
+
+            if now < cooldown_until:
+                logger.info(
+                    "STT Groq key %s находится на cooldown %.0f сек.",
+                    key_index + 1,
+                    cooldown_until - now,
+                )
+                continue
+
+            attempted_keys += 1
+
+            logger.info(
+                "Отправка записи в Groq STT через key %s.",
+                key_index + 1,
+            )
+
+            result = self._transcribe_with_key(
+                wav_path,
+                key_index,
+            )
+
+            if result.success:
+                self._preferred_key_index = key_index
+                return result.text
+
+            logger.error(result.error)
+
+            if result.status_code in {401, 403}:
+                # Неверный ключ исключаем до перезапуска.
+                self._key_cooldowns[key_index] = (
+                    time.monotonic() + 24 * 60 * 60
+                )
+                continue
+
+            if result.status_code == 429:
+                self._key_cooldowns[key_index] = (
+                    time.monotonic() + 90
+                )
+                continue
+
+            if result.retryable:
+                self._key_cooldowns[key_index] = (
+                    time.monotonic() + 15
+                )
+                continue
+
+            # Неповторяемая ошибка запроса обычно относится к самому
+            # аудиофайлу, поэтому другой ключ не поможет.
+            break
+
+        if attempted_keys == 0:
+            logger.error(
+                "Все Groq STT-ключи находятся на cooldown."
+            )
+
+        return ""
+
+    def listen(
+        self,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> str:
+        try:
+            audio = self._record(should_abort)
+        except sd.PortAudioError as exc:
+            logger.exception(
+                "Ошибка доступа к микрофону: %s",
+                exc,
+            )
+            time.sleep(1.0)
             return ""
+        except Exception:
+            logger.exception(
+                "Непредвиденная ошибка записи звука."
+            )
+            time.sleep(0.5)
+            return ""
+
+        if audio is None or audio.size == 0:
+            return ""
+
+        temp_directory = Path("data/temp")
+        temp_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        temporary_path: Path | None = None
+
+        try:
+            file_descriptor, raw_path = tempfile.mkstemp(
+                prefix="nova_mic_",
+                suffix=".wav",
+                dir=str(temp_directory),
+            )
+            os.close(file_descriptor)
+            temporary_path = Path(raw_path)
+
+            with wave.open(
+                str(temporary_path),
+                "wb",
+            ) as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(audio.tobytes())
+
+            duration_seconds = (
+                len(audio) / self.sample_rate
+            )
+
+            logger.info(
+                "Аудиофайл подготовлен: duration=%.2f sec, "
+                "samples=%s, path=%s",
+                duration_seconds,
+                len(audio),
+                temporary_path,
+            )
+
+            if should_abort and should_abort():
+                return ""
+
+            text = self._transcribe(temporary_path)
+
+            if not text:
+                logger.warning(
+                    "STT не вернул распознанный текст."
+                )
+                return ""
+
+            text = normalize_voice_command(text)
+            normalized = text.lower().strip().rstrip(".!?")
+
+            if normalized in WHISPER_HALLUCINATIONS:
+                logger.info(
+                    "Отсечена галлюцинация Whisper: %r",
+                    text,
+                )
+                return ""
+
+            print(f"[Вы сказали]: {text}")
+            return text
+
+        finally:
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(
+                        missing_ok=True
+                    )
+                except OSError:
+                    logger.warning(
+                        "Не удалось удалить временную запись %s.",
+                        temporary_path,
+                    )

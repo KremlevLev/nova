@@ -1,97 +1,147 @@
 # modules/ui/overlay.py
-import tkinter as tk
-import threading
-import queue
+from __future__ import annotations
+
 import logging
+import queue
+import threading
+import tkinter as tk
+
 
 logger = logging.getLogger("Overlay")
 
-# Потокобезопасная очередь для передачи состояний из основного цикла в GUI
-_gui_queue = queue.Queue()
-_overlay_thread = None
+_gui_queue: queue.Queue[str | None] = queue.Queue(maxsize=1)
+_overlay_thread: threading.Thread | None = None
+_ready_event = threading.Event()
+
 
 class NovaOverlay:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Nova Overlay")
-        
-        # Убираем рамки Windows (делаем окно borderless)
         self.root.overrideredirect(True)
-        # Окно всегда поверх всех остальных окон
         self.root.attributes("-topmost", True)
-        # Полупрозрачность окна
         self.root.attributes("-alpha", 0.9)
-        
-        # Позиционируем виджет в правый нижний угол экрана
+        self.root.configure(bg="#121214")
+
+        width, height = 230, 48
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        width, height = 200, 48
-        
-        # Отступ 20px справа и 60px снизу (над панелью задач)
+
         x = screen_width - width - 20
         y = screen_height - height - 60
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        
-        # Дизайн в темных тонах
-        self.root.configure(bg="#121214")
-        
-        # Рисуем светодиод-индикатор статуса
-        self.canvas = tk.Canvas(self.root, width=16, height=16, bg="#121214", highlightthickness=0)
+
+        self.canvas = tk.Canvas(
+            self.root,
+            width=16,
+            height=16,
+            bg="#121214",
+            highlightthickness=0,
+        )
         self.canvas.pack(side="left", padx=(15, 10))
-        self.led = self.canvas.create_oval(2, 2, 14, 14, fill="#555555")  # Серый по умолчанию (Спит)
-        
-        # Текстовая метка состояния
+
+        self.led = self.canvas.create_oval(
+            2,
+            2,
+            14,
+            14,
+            fill="#555555",
+        )
+
         self.label = tk.Label(
-            self.root, 
-            text="СПИТ", 
-            fg="#88888F", 
-            bg="#121214", 
-            font=("Segoe UI", 10, "bold")
+            self.root,
+            text="СПИТ",
+            fg="#88888F",
+            bg="#121214",
+            font=("Segoe UI", 10, "bold"),
         )
         self.label.pack(side="left")
-        
-        # Запускаем фоновый опрос очереди событий раз в 100 мс
-        self.root.after(100, self.process_queue)
 
-    def process_queue(self):
+        _ready_event.set()
+        self.root.after(50, self.process_queue)
+
+    def process_queue(self) -> None:
+        latest_status: str | None = None
+
         try:
             while True:
-                status = _gui_queue.get_nowait()
-                self.update_ui(status)
+                item = _gui_queue.get_nowait()
                 _gui_queue.task_done()
+
+                if item is None:
+                    self.root.destroy()
+                    return
+
+                latest_status = item
         except queue.Empty:
             pass
-        self.root.after(100, self.process_queue)
 
-    def update_ui(self, status: str):
-        # Соответствие цветов и текста состояниям
+        if latest_status is not None:
+            self.update_ui(latest_status)
+
+        self.root.after(50, self.process_queue)
+
+    def update_ui(self, status: str) -> None:
         states = {
-            "СПИТ": ("#555555", "#88888F"),        # Серый индикатор, серый текст
-            "СЛУШАЕТ": ("#00FF66", "#00FF66"),     # Ярко-зеленый (активный слух)
-            "ДУМАЕТ": ("#FFCC00", "#FFCC00"),      # Желтый (обработка LLM)
-            "ГОВОРИТ": ("#0099FF", "#0099FF")      # Синий (синтез TTS)
+            "СПИТ": ("#555555", "#88888F"),
+            "СЛУШАЕТ": ("#00FF66", "#00FF66"),
+            "РАСПОЗНАЕТ": ("#00DDAA", "#00DDAA"),
+            "ДУМАЕТ": ("#FFCC00", "#FFCC00"),
+            "ЖДЕТ РАЗРЕШЕНИЕ": ("#FF8800", "#FF8800"),
+            "ВЫПОЛНЯЕТ": ("#B266FF", "#B266FF"),
+            "ГОВОРИТ": ("#0099FF", "#0099FF"),
+            "ОШИБКА": ("#FF3344", "#FF3344"),
+            "ЗАВЕРШАЕТ РАБОТУ": ("#999999", "#999999"),
         }
-        color, text_color = states.get(status, ("#555555", "#88888F"))
-        
+
+        color, text_color = states.get(
+            status,
+            ("#555555", "#88888F"),
+        )
+
         self.canvas.itemconfig(self.led, fill=color)
         self.label.config(text=status, fg=text_color)
 
-def _run_gui():
+
+def _run_gui() -> None:
     try:
         root = tk.Tk()
-        app = NovaOverlay(root)
+        NovaOverlay(root)
         root.mainloop()
-    except Exception as e:
-        logger.error(f"Ошибка в цикле GUI: {e}")
+    except Exception:
+        logger.exception("Ошибка GUI overlay.")
+    finally:
+        _ready_event.clear()
 
-def start_overlay():
-    """Запускает окно оверлея в отдельном потоке"""
+
+def start_overlay() -> None:
     global _overlay_thread
-    if _overlay_thread is None:
-        _overlay_thread = threading.Thread(target=_run_gui, daemon=True)
-        _overlay_thread.start()
-        logger.info("Визуальный оверлей успешно запущен.")
 
-def update_status(status: str):
-    """Отправляет новое состояние ассистента в GUI ('СПИТ', 'СЛУШАЕТ', 'ДУМАЕТ', 'ГОВОРИТ')"""
-    _gui_queue.put(status)
+    if _overlay_thread and _overlay_thread.is_alive():
+        return
+
+    _overlay_thread = threading.Thread(
+        target=_run_gui,
+        name="nova-overlay",
+        daemon=True,
+    )
+    _overlay_thread.start()
+    _ready_event.wait(timeout=3.0)
+
+
+def update_status(status: str | None) -> None:
+    try:
+        while True:
+            _gui_queue.get_nowait()
+            _gui_queue.task_done()
+    except queue.Empty:
+        pass
+
+    try:
+        _gui_queue.put_nowait(status)
+    except queue.Full:
+        pass
+
+
+def stop_overlay() -> None:
+    update_status(None)

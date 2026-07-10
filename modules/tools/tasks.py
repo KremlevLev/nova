@@ -1,125 +1,323 @@
 # modules/tools/tasks.py
-import os
-import json
-import datetime
-from typing import List, Dict, Any
+from __future__ import annotations
+
 import asyncio
+import datetime as dt
+import json
+import logging
+import os
+import tempfile
+import threading
+import uuid
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+
+logger = logging.getLogger("TaskScheduler")
+
 
 class TaskScheduler:
-    """
-    Модульный планировщик задач.
-    Сохраняет задачи в JSON-файл и позволяет ставить напоминания/будильники.
-    """
-    def __init__(self, storage_path: str = "data/tasks/tasks.json"):
-        self.storage_path = storage_path
-        os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
-        self.tasks: List[Dict[str, Any]] = []
+    def __init__(
+        self,
+        storage_path: str = "data/tasks/tasks.json",
+    ) -> None:
+        self.storage_path = Path(storage_path)
+        self.storage_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        self.tasks: list[dict[str, Any]] = []
+        self._lock = threading.RLock()
         self._load_tasks()
 
-    def _load_tasks(self):
-        if os.path.exists(self.storage_path):
-            try:
-                with open(self.storage_path, "r", encoding="utf-8") as f:
-                    self.tasks = json.load(f)
-            except Exception as e:
-                print(f"[Scheduler Error]: Ошибка загрузки задач: {e}")
+    def _load_tasks(self) -> None:
+        if not self.storage_path.exists():
+            return
 
-    def _save_tasks(self):
         try:
-            with open(self.storage_path, "w", encoding="utf-8") as f:
-                json.dump(self.tasks, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"[Scheduler Error]: Ошибка сохранения задач: {e}")
+            with self.storage_path.open(
+                "r",
+                encoding="utf-8",
+            ) as file:
+                loaded = json.load(file)
 
-    def add_reminder(self, time_str: str, message: str) -> str:
-        """
-        Добавляет напоминание.
-        time_str может быть в формате:
-        - "HH:MM" (сегодня в указанное время)
-        - Абсолютная дата и время "YYYY-MM-DD HH:MM:SS"
-        - Относительное время в минутах (например, "+15" - через 15 минут)
-        """
-        now = datetime.datetime.now()
-        target_time: datetime.datetime
-        
-        try:
-            # Сценарий 1: Относительное время в минутах (+15)
-            if time_str.startswith("+"):
-                minutes = int(time_str[1:])
-                target_time = now + datetime.timedelta(minutes=minutes)
-            
-            # Сценарий 2: Только время (HH:MM)
-            elif len(time_str) == 5 and ":" in time_str:
-                hour, minute = map(int, time_str.split(":"))
-                target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                # Если время уже прошло сегодня, переносим на завтра
-                if target_time < now:
-                    target_time += datetime.timedelta(days=1)
-                    
-            # Сценарий 3: Полная дата (YYYY-MM-DD HH:MM)
-            else:
-                target_time = datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M")
-                
+            if not isinstance(loaded, list):
+                raise ValueError(
+                    "Корень файла задач должен быть массивом."
+                )
+
+            self.tasks = [
+                task
+                for task in loaded
+                if isinstance(task, dict)
+            ]
         except Exception:
-            return f"Ошибка: Неверный формат времени '{time_str}'. Используйте '+минуты' (например, '+10') или 'ЧЧ:ММ' (например, '15:30')."
+            logger.exception("Не удалось загрузить задачи.")
+            self.tasks = []
 
-        task_id = f"task_{int(target_time.timestamp())}"
-        
+    def _save_tasks(self) -> None:
+        with self._lock:
+            file_descriptor, temporary_name = tempfile.mkstemp(
+                prefix="tasks_",
+                suffix=".json.tmp",
+                dir=str(self.storage_path.parent),
+            )
+
+            try:
+                with os.fdopen(
+                    file_descriptor,
+                    "w",
+                    encoding="utf-8",
+                ) as file:
+                    json.dump(
+                        self.tasks,
+                        file,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    file.flush()
+                    os.fsync(file.fileno())
+
+                os.replace(
+                    temporary_name,
+                    self.storage_path,
+                )
+            except Exception:
+                try:
+                    os.unlink(temporary_name)
+                except OSError:
+                    pass
+                raise
+
+    @staticmethod
+    def _parse_time(
+        time_str: str,
+        now: dt.datetime,
+    ) -> dt.datetime:
+        clean = time_str.strip()
+
+        if clean.startswith("+"):
+            minutes = int(clean[1:])
+            if minutes <= 0 or minutes > 10080:
+                raise ValueError(
+                    "Интервал должен быть от 1 до 10080 минут."
+                )
+            return now + dt.timedelta(minutes=minutes)
+
+        if len(clean) == 5 and clean[2] == ":":
+            hour, minute = map(int, clean.split(":"))
+            target = now.replace(
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0,
+            )
+
+            if target <= now:
+                target += dt.timedelta(days=1)
+
+            return target
+
+        formats = (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+        )
+
+        for time_format in formats:
+            try:
+                return dt.datetime.strptime(clean, time_format)
+            except ValueError:
+                continue
+
+        raise ValueError("Неподдерживаемый формат времени.")
+
+    def add_reminder(
+        self,
+        time_str: str,
+        message: str,
+    ) -> str:
+        clean_message = message.strip()
+
+        if not clean_message:
+            return "Ошибка: Текст напоминания пуст."
+
+        if len(clean_message) > 1000:
+            return "Ошибка: Текст напоминания слишком длинный."
+
+        now = dt.datetime.now()
+
+        try:
+            target_time = self._parse_time(time_str, now)
+        except (ValueError, TypeError) as exc:
+            return (
+                f"Ошибка: Неверный формат времени '{time_str}': "
+                f"{exc}"
+            )
+
         new_task = {
-            "id": task_id,
+            "id": f"task_{uuid.uuid4().hex}",
             "type": "reminder",
-            "time": target_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "message": message,
-            "completed": False
+            "time": target_time.isoformat(timespec="seconds"),
+            "message": clean_message,
+            "status": "pending",
+            "created_at": now.isoformat(timespec="seconds"),
+            "delivered_at": None,
         }
-        
-        self.tasks.append(new_task)
-        self._save_tasks()
-        
-        formatted_time = target_time.strftime("%H:%M (сегодня)" if target_time.date() == now.date() else "%d.%m в %H:%M")
-        return f"Напоминание успешно установлено на {formatted_time}."
+
+        with self._lock:
+            self.tasks.append(new_task)
+            self._save_tasks()
+
+        if target_time.date() == now.date():
+            formatted_time = target_time.strftime(
+                "%H:%M сегодня"
+            )
+        else:
+            formatted_time = target_time.strftime(
+                "%d.%m.%Y в %H:%M"
+            )
+
+        return (
+            f"Напоминание установлено на {formatted_time}. "
+            f"Идентификатор: {new_task['id']}."
+        )
 
     def list_reminders(self) -> str:
-        """Возвращает список активных напоминаний"""
-        active_tasks = [t for t in self.tasks if not t.get("completed", False)]
+        with self._lock:
+            active_tasks = [
+                task.copy()
+                for task in self.tasks
+                if task.get("status", "pending")
+                in {"pending", "due", "queued"}
+            ]
+
         if not active_tasks:
             return "У вас нет активных напоминаний."
-            
-        result = "Ваши активные задачи:\n"
-        for i, task in enumerate(active_tasks, 1):
-            result += f"{i}. [{task['time']}] {task['message']} (ID: {task['id']})\n"
-        return result
 
-    def get_pending_tasks(self) -> List[Dict[str, Any]]:
-        """Возвращает список задач, время выполнения которых наступило"""
-        now = datetime.datetime.now()
-        pending = []
-        
-        for task in self.tasks:
-            if not task.get("completed", False):
-                task_time = datetime.datetime.strptime(task["time"], "%Y-%m-%d %H:%M:%S")
+        active_tasks.sort(key=lambda item: item.get("time", ""))
+
+        lines = ["Ваши активные напоминания:"]
+
+        for index, task in enumerate(active_tasks, 1):
+            lines.append(
+                f"{index}. [{task.get('time')}] "
+                f"{task.get('message')} "
+                f"(ID: {task.get('id')})"
+            )
+
+        return "\n".join(lines)
+
+    def get_pending_tasks(self) -> list[dict[str, Any]]:
+        now = dt.datetime.now()
+        pending: list[dict[str, Any]] = []
+
+        with self._lock:
+            for task in self.tasks:
+                if task.get("status", "pending") != "pending":
+                    continue
+
+                try:
+                    task_time = dt.datetime.fromisoformat(
+                        str(task["time"])
+                    )
+                except (KeyError, TypeError, ValueError):
+                    task["status"] = "invalid"
+                    logger.warning(
+                        "Задача %s содержит поврежденное время.",
+                        task.get("id"),
+                    )
+                    continue
+
                 if now >= task_time:
-                    pending.append(task)
-                    
+                    task["status"] = "due"
+                    pending.append(task.copy())
+
+            if pending:
+                self._save_tasks()
+
         return pending
 
-    def mark_completed(self, task_id: str):
-        """Помечает задачу как выполненную"""
-        for task in self.tasks:
-            if task["id"] == task_id:
-                task["completed"] = True
-                break
-        self._save_tasks()
+    def mark_delivered(self, task_id: str) -> bool:
+        with self._lock:
+            for task in self.tasks:
+                if task.get("id") == task_id:
+                    task["status"] = "delivered"
+                    task["delivered_at"] = dt.datetime.now().isoformat(
+                        timespec="seconds"
+                    )
+                    self._save_tasks()
+                    return True
 
-async def reminder_checker_worker(scheduler, speak_function):
-    """Фоновая задача, проверяющая и озвучивающая наступившие напоминания"""
-    while True:
+        return False
+
+    def mark_failed(
+        self,
+        task_id: str,
+        reason: str,
+    ) -> bool:
+        with self._lock:
+            for task in self.tasks:
+                if task.get("id") == task_id:
+                    task["status"] = "failed"
+                    task["failure_reason"] = reason
+                    self._save_tasks()
+                    return True
+
+        return False
+
+    def cancel_reminder(self, task_id: str) -> str:
+        with self._lock:
+            for task in self.tasks:
+                if task.get("id") == task_id:
+                    if task.get("status") == "delivered":
+                        return "Напоминание уже доставлено."
+
+                    task["status"] = "cancelled"
+                    self._save_tasks()
+                    return "Напоминание отменено."
+
+        return "Ошибка: Напоминание с таким ID не найдено."
+
+
+async def reminder_checker_worker(
+    scheduler: TaskScheduler,
+    notify: Callable[[str], Awaitable[None]],
+    shutdown_event: asyncio.Event,
+) -> None:
+    while not shutdown_event.is_set():
         try:
-            pending = scheduler.get_pending_tasks()
+            pending = await asyncio.to_thread(
+                scheduler.get_pending_tasks
+            )
+
             for task in pending:
-                speak_function(f"Внимание! Напоминаю: {task['message']}")
-                scheduler.mark_completed(task["id"])
-        except Exception as e:
-            print(f"[Worker Error]: Ошибка проверки задач: {e}")
-            
-        await asyncio.sleep(10) # Опрос каждые 10 секунд
+                try:
+                    await notify(
+                        f"Внимание. Напоминаю: {task['message']}"
+                    )
+                    await asyncio.to_thread(
+                        scheduler.mark_delivered,
+                        task["id"],
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Не удалось доставить напоминание %s.",
+                        task.get("id"),
+                    )
+                    await asyncio.to_thread(
+                        scheduler.mark_failed,
+                        task["id"],
+                        str(exc),
+                    )
+
+        except Exception:
+            logger.exception("Ошибка фонового планировщика.")
+
+        try:
+            await asyncio.wait_for(
+                shutdown_event.wait(),
+                timeout=1.0,
+            )
+        except asyncio.TimeoutError:
+            pass
