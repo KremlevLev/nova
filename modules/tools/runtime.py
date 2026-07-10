@@ -81,12 +81,41 @@ RISK_BY_TOOL = {
     "close_application": RiskLevel.DESTRUCTIVE,
     "manage_windows": RiskLevel.DESTRUCTIVE,
     "execute_cmd_command": RiskLevel.DESTRUCTIVE,
+    "write_in_application": RiskLevel.WRITE,
 }
 
 
 def _looks_like_error(text: str) -> bool:
     normalized = text.lower()
     return any(marker in normalized for marker in ERROR_MARKERS)
+
+def strip_unknown_properties(
+    value: Any,
+    schema: dict[str, Any],
+) -> Any:
+    expected_type = schema.get("type")
+
+    if expected_type == "object" and isinstance(value, dict):
+        properties = schema.get("properties", {})
+
+        return {
+            key: strip_unknown_properties(
+                child_value,
+                properties[key],
+            )
+            for key, child_value in value.items()
+            if key in properties
+        }
+
+    if expected_type == "array" and isinstance(value, list):
+        item_schema = schema.get("items", {})
+
+        return [
+            strip_unknown_properties(item, item_schema)
+            for item in value
+        ]
+
+    return value
 
 
 def adapt_legacy_result(value: Any) -> ToolResult:
@@ -207,6 +236,10 @@ def validate_json_schema(
         if maximum is not None and value > maximum:
             errors.append(f"{path} должен быть не больше {maximum}.")
 
+    elif expected_type == "boolean":
+        if not isinstance(value, bool):
+            return [f"{path} должен быть логическим значением."]
+
     elif expected_type == "number":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return [f"{path} должен быть числом."]
@@ -311,7 +344,7 @@ class ToolRegistry:
                 tool.schema
                 for tool in self._tools.values()
             ]
-    
+
         return [
             tool.schema
             for name, tool in self._tools.items()
@@ -379,6 +412,22 @@ class ToolRunner:
                 "properties": {},
             },
         )
+        original_arguments = arguments
+        arguments = strip_unknown_properties(
+            arguments,
+            parameters_schema,
+        )
+
+        removed_arguments = sorted(
+            set(original_arguments) - set(arguments)
+        )
+
+        if removed_arguments:
+            logger.warning(
+                "Из вызова %s удалены неизвестные параметры: %s",
+                name,
+                removed_arguments,
+            )
 
         validation_errors = validate_json_schema(
             arguments,

@@ -8,6 +8,7 @@ import socket
 import sys
 from typing import Any, Callable
 from modules.domain.results import ToolResult
+from modules.tools.skills import WindowsSkills
 
 import keyboard
 import winsound
@@ -45,7 +46,6 @@ from modules.tools.os_utils import (
     list_active_windows,
     manage_media,
     manage_windows,
-    open_application,
     open_website,
     press_keyboard_combination,
     scrape_webpage,
@@ -120,6 +120,15 @@ def build_handlers(
     scheduler: TaskScheduler,
     app_launcher: WindowsAppIndexer,
 ) -> dict[str, Callable[..., Any]]:
+    
+    windows_skills = WindowsSkills(
+        app_launcher=app_launcher,
+        list_windows=list_active_windows,
+        focus_window=focus_window,
+        press_hotkey=press_keyboard_combination,
+        type_text=type_text,
+    )
+
     def launch_application(app_name: str):
         return app_launcher.launch_by_name(app_name)
 
@@ -165,6 +174,8 @@ def build_handlers(
         "create_workspace_project": (
             create_workspace_project
         ),
+        "write_in_application": (
+            windows_skills.write_in_application),
         "scrape_webpage": scrape_webpage,
         "get_clipboard_content": get_clipboard_content,
         "set_clipboard_content": set_clipboard_content,

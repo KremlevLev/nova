@@ -283,5 +283,15 @@ Agent workflow:
 4. Execute tools.
 5. Examine structured results.
 6. Give the final answer based on confirmed facts.
+
+High-level Windows skills:
+1. Prefer write_in_application when the user asks to write prepared text into
+   an editor or note application.
+2. If the user asks to write a note but does not provide its content or topic,
+   ask one concise clarification question. Do not claim that a note was made.
+3. If the user provides a topic, you may compose the requested text and pass
+   the complete composed text to write_in_application.
+4. Use atomic GUI tools only when no high-level skill matches the task.
+
 """
 SYSTEM_PROMPT = build_system_prompt()

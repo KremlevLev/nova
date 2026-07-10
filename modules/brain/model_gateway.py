@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+import copy
 
 from openai import AsyncOpenAI
 
@@ -150,6 +151,40 @@ class ModelGateway:
             *(client.close() for client in clients),
             return_exceptions=True,
         )
+
+    @staticmethod
+    def _prepare_tools_for_provider(
+        tools: list[dict[str, Any]] | None,
+        provider: str,
+    ) -> list[dict[str, Any]] | None:
+        if not tools:
+            return None
+
+        prepared = copy.deepcopy(tools)
+
+        if provider != "groq":
+            return prepared
+
+        def relax_schema(value: Any) -> None:
+            if isinstance(value, dict):
+                value.pop("additionalProperties", None)
+
+                for child in value.values():
+                    relax_schema(child)
+
+            elif isinstance(value, list):
+                for child in value:
+                    relax_schema(child)
+
+        for tool in prepared:
+            parameters = (
+                tool.get("function", {})
+                .get("parameters")
+            )
+            relax_schema(parameters)
+
+        return prepared
+
 
     def _base_url(self, provider: str) -> str:
         if provider == "groq":
@@ -354,7 +389,25 @@ class ModelGateway:
                 rotate_model=True,
                 cooldown_seconds=10,
             )
-
+        if any(
+            marker in lowered
+            for marker in (
+                "tool call validation failed",
+                "parameters for tool",
+                "did not match schema",
+                "additionalproperties",
+            )
+        ):
+            return GatewayFailure(
+                kind=FailureKind.TOOL_PROTOCOL,
+                message=(
+                    "Модель сформировала некорректные аргументы "
+                    "инструмента."
+                ),
+                retryable=True,
+                rotate_key=False,
+                rotate_model=True,
+            )
         if status_code == 400:
             return GatewayFailure(
                 kind=FailureKind.BAD_REQUEST,
@@ -425,9 +478,19 @@ class ModelGateway:
             "stream": True,
         }
 
-        if allow_tools and tools and candidate.supports_tools:
-            kwargs["tools"] = tools
+        prepared_tools = self._prepare_tools_for_provider(
+            tools,
+            candidate.provider,
+        )
+
+        if (
+            allow_tools
+            and prepared_tools
+            and candidate.supports_tools
+        ):
+            kwargs["tools"] = prepared_tools
             kwargs["tool_choice"] = "auto"
+
 
         if candidate.provider == "openrouter":
             kwargs["extra_headers"] = {

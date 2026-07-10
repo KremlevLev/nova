@@ -186,6 +186,53 @@ create_project_tool = {
     }
 }
 
+write_in_application_tool = {
+    "type": "function",
+    "function": {
+        "name": "write_in_application",
+        "description": (
+            "Открывает или активирует указанное приложение, "
+            "при необходимости создает новый документ и вводит "
+            "готовый текст. Используйте вместо ручной цепочки "
+            "open_application, focus_window, ctrl+n и type_text."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "app_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": (
+                        "Название приложения, например Obsidian, "
+                        "блокнот или Visual Studio Code."
+                    ),
+                },
+                "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100000,
+                    "description": (
+                        "Полный текст, который нужно ввести."
+                    ),
+                },
+                "create_new_document": {
+                    "type": "boolean",
+                    "description": (
+                        "Создать новый документ сочетанием ctrl+n "
+                        "перед вводом текста."
+                    ),
+                },
+            },
+            "required": [
+                "app_name",
+                "text",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
+
 scrape_webpage_tool = {
     "type": "function",
     "function": {
@@ -348,7 +395,8 @@ ALL_TOOLS = [
     mouse_click_tool, 
     press_hotkey_tool,
     list_windows_tool,
-    focus_window_tool
+    focus_window_tool,
+    write_in_application_tool
 ]
 
 for tool in ALL_TOOLS:

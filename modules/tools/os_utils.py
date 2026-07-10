@@ -591,8 +591,25 @@ def list_active_windows(*args, **kwargs) -> str:
         return f"Не удалось получить список окон: {e}"
 
 def focus_window(window_title_part: str) -> str:
-    """Находит окно по частичному совпадению заголовка и принудительно фокусируется на нем"""
     try:
+        original_query = window_title_part.strip()
+
+        try:
+            from modules.tools.app_indexer import (
+                RUSSIAN_ALIASES,
+                normalize_app_name,
+            )
+
+            normalized_query = normalize_app_name(
+                original_query
+            )
+            resolved_query = RUSSIAN_ALIASES.get(
+                normalized_query,
+                normalized_query,
+            )
+        except Exception:
+            resolved_query = original_query.lower()
+
         user32 = ctypes.windll.user32
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         found_hwnds = []
@@ -604,7 +621,11 @@ def focus_window(window_title_part: str) -> str:
                     buffer = ctypes.create_unicode_buffer(length + 1)
                     user32.GetWindowTextW(hwnd, buffer, length + 1)
                     title = buffer.value.lower()
-                    if window_title_part.lower() in title:
+                    if (
+                        original_query.lower() in title
+                        or resolved_query.lower() in title
+                    ):
+
                         found_hwnds.append(hwnd)
             return True
 
@@ -615,7 +636,18 @@ def focus_window(window_title_part: str) -> str:
             # 9 = SW_RESTORE (развернуть окно, если оно свернуто)
             user32.ShowWindow(hwnd, 9)
             user32.SetForegroundWindow(hwnd)
-            return f"Окно, содержащее '{window_title_part}', успешно выведено на передний план."
+            time.sleep(0.2)
+
+            if user32.GetForegroundWindow() != hwnd:
+                return (
+                    f"Не удалось подтвердить фокус окна "
+                    f"'{original_query}'."
+                )
+
+            return (
+                f"Окно '{original_query}' выведено "
+                "на передний план, фокус подтвержден."
+            )
         return f"Окно с заголовком, содержащим '{window_title_part}', не найдено."
     except Exception as e:
         return f"Не удалось сфокусироваться на окне: {e}"
