@@ -1,7 +1,11 @@
 # Nova: Локальный ИИ-ассистент для Windows
 
 Nova — это компактный и оптимизированный под работу на процессоре (CPU) голосовой ассистент, который управляет операционной системой Windows, ставит напоминания, сохраняет заметки и ищет информацию в сети.
-
+<p align="center">
+  <img src="https://shields.io" alt="GitHub Stars">
+  <img src="https://shields.io" alt="Python">
+  <img src="https://shields.io" alt="Windows">
+</p>
 ---
 
 ## 🛠️ Особенности архитектуры
