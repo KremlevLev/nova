@@ -1,9 +1,8 @@
-```markdown
 <div align="center">
 
 # ⚡ Nova — ваш локальный ИИ-агент для Windows
 
-**Голосовой ассистент, инженерный копилот и автоматизатор рабочего стола**
+### **Голосовой ассистент, инженерный копилот и автоматизатор рабочего стола**
 
 [![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
