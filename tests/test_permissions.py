@@ -1,0 +1,146 @@
+# tests/test_permissions.py
+from __future__ import annotations
+
+import asyncio
+
+from modules.tools.base import (
+    RiskLevel,
+    ToolCategory,
+    ToolContext,
+    ToolDefinition,
+)
+from modules.tools.policy import (
+    PolicyContext,
+    PolicyDecision,
+)
+from modules.tools.permissions import (
+    PermissionManager,
+)
+
+
+def create_policy_context(
+    tool_name: str,
+    risk: RiskLevel = RiskLevel.LOW,
+) -> PolicyContext:
+    context = ToolContext.create()
+
+    definition = ToolDefinition(
+        name=tool_name,
+        description="Test.",
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
+        handler=lambda: "ok",
+        risk=risk,
+        category=ToolCategory.UNKNOWN,
+    )
+
+    return PolicyContext.from_tool_context(
+        definition=definition,
+        arguments={},
+        context=context,
+    )
+
+
+def test_low_risk_is_allowed_without_confirmation() -> None:
+    manager = PermissionManager()
+
+    context = create_policy_context(
+        "focus_window",
+        risk=RiskLevel.LOW,
+    )
+
+    allowed, reason = manager.check(context)
+
+    assert allowed
+    assert reason is None
+
+
+def test_execute_risk_requires_confirmation() -> None:
+    manager = PermissionManager()
+
+    context = create_policy_context(
+        "run_terminal_command",
+        risk=RiskLevel.EXECUTE,
+    )
+
+    allowed, reason = manager.check(context)
+
+    assert not allowed
+    assert reason is None
+
+
+def test_denied_tool_is_rejected() -> None:
+    manager = PermissionManager()
+
+    context = create_policy_context(
+        "shutdown_system",
+        risk=RiskLevel.CRITICAL,
+    )
+
+    allowed, reason = manager.check(context)
+
+    assert not allowed
+    assert reason is not None
+    assert "запрещён" in reason.lower()
+
+
+def test_confirm_and_deny_work() -> None:
+    manager = PermissionManager()
+
+    context = create_policy_context(
+        "execute_python_code",
+        risk=RiskLevel.EXECUTE,
+    )
+
+    request = manager.request(context)
+
+    assert not request.resolved
+
+    assert manager.confirm(
+        request.operation_id
+    )
+
+    assert not manager.confirm(
+        request.operation_id
+    )
+
+
+def test_deny_rejects_operation() -> None:
+    manager = PermissionManager()
+
+    context = create_policy_context(
+        "execute_python_code",
+        risk=RiskLevel.EXECUTE,
+    )
+
+    request = manager.request(context)
+
+    assert manager.deny(
+        request.operation_id
+    )
+
+    assert not manager.deny(
+        request.operation_id
+    )
+
+
+def test_wait_for_confirmation_returns_true_for_low_risk() -> None:
+    async def scenario() -> None:
+        manager = PermissionManager()
+
+        context = create_policy_context(
+            "focus_window",
+            risk=RiskLevel.LOW,
+        )
+
+        granted = (
+            await manager.wait_for_confirmation(
+                context
+            )
+        )
+
+        assert granted
+
+    asyncio.run(scenario())

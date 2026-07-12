@@ -97,6 +97,26 @@ def select_tool_names(
     """
     text = user_text.lower().replace("ё", "е")
     selected = set(COMMON_READ_TOOLS)
+    filesystem_markers = (
+        "файл",
+        "прочитай файл",
+        "открой файл",
+        "сохрани файл",
+        "запиши файл",
+        "создай файл",
+        "найди файл",
+        "поиск файлов",
+        "дифф",
+        "diff",
+        "патч",
+        "patch",
+        "откати",
+        "rollback",
+        "восстанови файл",
+    )
+
+    if contains_any(text, filesystem_markers):
+        selected |= FILESYSTEM_TOOLS
 
     application_markers = (
         "открой",
@@ -156,6 +176,34 @@ def select_tool_names(
         "предпочт",
         "забудь",
     )
+    development_markers = (
+        "код",
+        "скрипт",
+        "проект",
+        "терминал",
+        "команд",
+        "тест",
+        "pytest",
+        "pip",
+        "git",
+        "docker",
+        "kubernetes",
+        "python",
+        "traceback",
+        "репозитор",
+        "fastapi",
+        "сервер",
+        "база данных",
+        "логи",
+        "запусти сервер",
+        "запусти тесты",
+        "фоновый процесс",
+        "процесс",
+    )
+
+    if contains_any(text, development_markers):
+        selected |= DEVELOPMENT_TOOLS
+        selected |= PROCESS_MANAGER_TOOLS
 
     reminder_markers = (
         "напомни",
@@ -251,3 +299,18 @@ def select_tool_names(
         selected |= GUI_TOOLS
 
     return selected
+PROCESS_MANAGER_TOOLS = {
+    "start_process",
+    "get_process_status",
+    "read_process_output",
+    "stop_process",
+    "list_processes",
+}
+FILESYSTEM_TOOLS = {
+    "read_text_file",
+    "write_text_file",
+    "apply_text_patch",
+    "get_file_diff",
+    "search_files",
+    "rollback_file",
+}

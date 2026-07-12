@@ -408,3 +408,312 @@ for tool in ALL_TOOLS:
         },
     )
     parameters.setdefault("additionalProperties", False)
+
+process_manager_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "start_process",
+            "description": (
+                "Запускает фоновый процесс "
+                "(сервер, тесты, сборку) "
+                "и возвращает его идентификатор."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": (
+                            "Команда и аргументы, "
+                            "например "
+                            "['python', '-m', 'http.server']"
+                        ),
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": (
+                            "Человекочитаемое имя процесса."
+                        ),
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": (
+                            "Рабочий каталог."
+                        ),
+                    },
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_process_status",
+            "description": (
+                "Возвращает статус фонового процесса "
+                "по его идентификатору."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "process_id": {
+                        "type": "string",
+                        "description": (
+                            "Идентификатор процесса."
+                        ),
+                    },
+                },
+                "required": ["process_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_process_output",
+            "description": (
+                "Читает последние строки stdout "
+                "или stderr фонового процесса."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "process_id": {
+                        "type": "string",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": (
+                            "Максимум строк для чтения."
+                        ),
+                    },
+                    "stream": {
+                        "type": "string",
+                        "enum": [
+                            "stdout",
+                            "stderr",
+                        ],
+                        "description": (
+                            "Какой поток читать."
+                        ),
+                    },
+                },
+                "required": ["process_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_process",
+            "description": (
+                "Останавливает фоновый процесс."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "process_id": {
+                        "type": "string",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "Принудительное завершение."
+                        ),
+                    },
+                },
+                "required": ["process_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_processes",
+            "description": (
+                "Возвращает список всех управляемых "
+                "фоновых процессов."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(process_manager_tools)
+
+filesystem_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_text_file",
+            "description": (
+                "Читает содержимое текстового файла."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Путь к файлу."
+                        ),
+                    },
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_text_file",
+            "description": (
+                "Записывает текст в файл. "
+                "Автоматически создаёт backup."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                    },
+                    "content": {
+                        "type": "string",
+                    },
+                    "create_backup": {
+                        "type": "boolean",
+                    },
+                },
+                "required": [
+                    "path",
+                    "content",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_text_patch",
+            "description": (
+                "Применяет текстовый патч к файлу. "
+                "Поддерживает + (добавить), "
+                "- (удалить), = (заменить)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                    },
+                    "patch": {
+                        "type": "string",
+                        "description": (
+                            "Строки патча, "
+                            "например:\n"
+                            "+ Новая строка\n"
+                            "- Удалить эту\n"
+                            "= Старое -> Новое"
+                        ),
+                    },
+                },
+                "required": [
+                    "path",
+                    "patch",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_diff",
+            "description": (
+                "Возвращает diff файла."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                    },
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": (
+                "Ищет файлы по шаблону "
+                "в указанном каталоге."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": (
+                            "Шаблон поиска, "
+                            "например *.py"
+                        ),
+                    },
+                    "max_results": {
+                        "type": "integer",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                    },
+                },
+                "required": [
+                    "directory",
+                    "pattern",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rollback_file",
+            "description": (
+                "Восстанавливает последний backup файла."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                    },
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(filesystem_tools)

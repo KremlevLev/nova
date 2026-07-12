@@ -7,6 +7,14 @@ import json
 import logging
 import time
 from typing import Any, Callable
+from modules.tools.policy import (
+    PolicyContext,
+    PolicyDecision,
+    evaluate_policy,
+)
+from modules.tools.permissions import (
+    PermissionManager,
+)
 
 from core.config import TOOL_TIMEOUT_SECONDS
 from modules.domain.results import (
@@ -614,8 +622,16 @@ class ToolRunner:
     def __init__(
         self,
         registry: ToolRegistry,
+        *,
+        permission_manager: (
+            PermissionManager | None
+        ) = None,
     ) -> None:
         self.registry = registry
+        self.permission_manager = (
+            permission_manager
+            or PermissionManager()
+        )
 
     @staticmethod
     def _parse_arguments(
@@ -731,6 +747,49 @@ class ToolRunner:
         )
 
         actual_context.cancellation.raise_if_cancelled()
+        policy_context = PolicyContext.from_tool_context(
+            definition=definition,
+            arguments=arguments,
+            context=actual_context,
+        )
+
+        allowed, denial_reason = (
+            self.permission_manager.check(
+                policy_context
+            )
+        )
+
+        if denial_reason is not None:
+            return ToolResult.failure(
+                "POLICY_DENIED",
+                denial_reason,
+                data={
+                    "operation_id": (
+                        actual_context.operation_id
+                    ),
+                },
+            )
+
+        if not allowed:
+            granted = (
+                await self.permission_manager.wait_for_confirmation(
+                    policy_context
+                )
+            )
+
+            if not granted:
+                return ToolResult.failure(
+                    "USER_DENIED",
+                    (
+                        f"Пользователь запретил выполнение "
+                        f"'{definition.name}'."
+                    ),
+                    data={
+                        "operation_id": (
+                            actual_context.operation_id
+                        ),
+                    },
+                )
 
         original_argument_names = set(arguments)
 

@@ -9,6 +9,10 @@ from modules.application.reporting import (
     build_assistant_response_from_tools,
 )
 from modules.tools.base import ToolContext
+from modules.tools.budgets import (
+    AgentBudget,
+    BudgetManager,
+)
 
 from core.config import (
     MAX_AGENT_TURNS,
@@ -186,6 +190,8 @@ class AgentService:
         self.llm = llm
         self.registry = registry
         self.runner = runner
+        self.budget_manager = BudgetManager()
+        self.default_budget = AgentBudget()
 
         self.history = llm.history
 
@@ -499,6 +505,87 @@ class AgentService:
         turn_id = (
             f"turn_{uuid.uuid4().hex}"
         )
+
+        actual_user_content = (
+            user_content
+            if user_content is not None
+            else user_text
+        )
+
+        self.history.append(
+            {
+                "role": "user",
+                "content": actual_user_content,
+            }
+        )
+
+        complexity = classify_complexity(
+            user_text,
+            has_image=has_image,
+            needs_tools=use_tools,
+        )
+
+        selected_tool_names = select_tool_names(
+            user_text,
+            has_image=has_image,
+        )
+
+        tool_schemas = (
+            self.registry.schemas(selected_tool_names)
+            if use_tools
+            else None
+        )
+
+        executed_signatures: set[str] = set()
+        executed_tool_results: list[dict[str, Any]] = []
+
+        total_tool_calls = 0
+        action_nudge_count = 0
+
+        # Инициализация бюджета для этого запроса.
+        budget_state = (
+            self.budget_manager.create_state(
+                turn_id,
+                budget=self.default_budget,
+            )
+        )
+
+        budget_state.record_model_call()
+
+        exhausted, reason = (
+            self.budget_manager.is_exhausted(
+                turn_id
+            )
+        )
+
+        if exhausted:
+            logger.warning(
+                "Бюджет исчерпан до запроса модели: %s",
+                reason,
+            )
+
+            if executed_tool_results:
+                return await self._create_final_report(
+                    user_text=user_text,
+                    tool_results=(
+                        executed_tool_results
+                    ),
+                    original_complexity=complexity,
+                    budget_exhausted=True,
+                )
+
+            return AssistantResponse(
+                display_text=(
+                    "Бюджет запроса исчерпан. "
+                    f"Причина: {reason}"
+                ),
+                speech_text=(
+                    "Сэр, бюджет запроса исчерпан."
+                ),
+                success=False,
+                error_code="BUDGET_EXHAUSTED",
+            )
+
         actual_user_content = (
             user_content
             if user_content is not None
@@ -545,9 +632,45 @@ class AgentService:
                 },
                 *self.history,
             ]
+            # Проверка бюджета перед каждым обращением к модели.
+            budget_state.record_model_call()
+
+            exhausted, reason = (
+                self.budget_manager.is_exhausted(
+                    turn_id
+                )
+            )
+
+            if exhausted:
+                logger.warning(
+                    "Бюджет исчерпан до запроса модели: %s",
+                    reason,
+                )
+
+                if executed_tool_results:
+                    return await self._create_final_report(
+                        user_text=user_text,
+                        tool_results=(
+                            executed_tool_results
+                        ),
+                        original_complexity=complexity,
+                        budget_exhausted=True,
+                    )
+
+                return AssistantResponse(
+                    display_text=(
+                        "Бюджет запроса исчерпан. "
+                        f"Причина: {reason}"
+                    ),
+                    speech_text=(
+                        "Сэр, бюджет запроса исчерпан."
+                    ),
+                    success=False,
+                    error_code="BUDGET_EXHAUSTED",
+                )
 
             try:
-                generated = await self._request_model(
+                    generated = await self._request_model(
                     complexity=complexity,
                     messages=messages,
                     tools=tool_schemas,
@@ -676,6 +799,37 @@ class AgentService:
                 signature = canonical_tool_signature(
                     tool_call
                 )
+                    # Проверка повтора через бюджет.
+                if  self.budget_manager.is_tool_repeated(
+                        turn_id,
+                        signature,
+                    ):
+                    result_content = (
+                        self._duplicate_result_content(
+                            signature
+                        )
+                    )
+                    self.history.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": (
+                                tool_call["id"]
+                            ),
+                            "name": (
+                                tool_call[
+                                    "function"
+                                ]["name"]
+                            ),
+                            "content": result_content,
+                        }
+                    )
+                    continue
+
+                executed_signatures.add(signature)
+                self.budget_manager.record_tool_call(
+                        turn_id,
+                        signature,
+                    )
 
                 if signature in executed_signatures:
                     result_content = (

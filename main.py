@@ -1,6 +1,16 @@
 # main.py
 from __future__ import annotations
-
+from modules.windows.process_manager import (
+    ProcessManager
+)
+from modules.windows.filesystem import (
+    read_text_file,
+    write_text_file,
+    apply_text_patch,
+    get_file_diff,
+    search_files,
+    rollback_file,
+)
 import asyncio
 import logging
 import re
@@ -70,6 +80,7 @@ from modules.ui.overlay import (
     update_status,
 )
 
+process_manager = ProcessManager()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,6 +132,7 @@ def build_handlers(
     memory: LocalMemory,
     scheduler: TaskScheduler,
     app_launcher: WindowsAppIndexer,
+    process_manager: ProcessManager,
 ) -> dict[str, Callable[..., Any]]:
     
     windows_skills = WindowsSkills(
@@ -131,6 +143,46 @@ def build_handlers(
         type_text=type_text,
         get_active_window_title=get_active_window_title
     )
+    def start_process_handler(
+        command: list[str],
+        label: str | None = None,
+        cwd: str | None = None,
+    ) -> ToolResult:
+        return process_manager.start_process(
+            command,
+            label=label,
+            cwd=cwd,
+        )
+
+    def get_process_status_handler(
+        process_id: str,
+    ) -> ToolResult:
+        return process_manager.get_process_status(
+            process_id
+        )
+
+    def read_process_output_handler(
+        process_id: str,
+        max_lines: int = 100,
+        stream: str = "stdout",
+    ) -> ToolResult:
+        return process_manager.read_process_output(
+            process_id,
+            max_lines=max_lines,
+            stream=stream,
+        )
+
+    def stop_process_handler(
+        process_id: str,
+        force: bool = False,
+    ) -> ToolResult:
+        return process_manager.stop_process(
+            process_id,
+            force=force,
+        )
+
+    def list_processes_handler() -> ToolResult:
+        return process_manager.list_processes()
 
     def launch_application(app_name: str):
         return app_launcher.launch_by_name(app_name)
@@ -185,6 +237,24 @@ def build_handlers(
         "run_terminal_command": run_terminal_command,
         "list_active_windows": list_active_windows,
         "focus_window": focus_window,
+        "start_process": start_process_handler,
+        "get_process_status": (
+            get_process_status_handler
+        ),
+        "read_process_output": (
+            read_process_output_handler
+        ),
+        "stop_process": stop_process_handler,
+        "list_processes": (
+            list_processes_handler
+        ),
+        "read_text_file": read_text_file,
+        "write_text_file": write_text_file,
+        "apply_text_patch": apply_text_patch,
+        "get_file_diff": get_file_diff,
+        "search_files": search_files,
+        "rollback_file": rollback_file,
+
     }
 
 
