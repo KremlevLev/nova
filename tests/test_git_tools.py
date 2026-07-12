@@ -97,6 +97,19 @@ def test_git_branch() -> None:
         repo = Path(directory)
         _init_git_repo(repo)
 
+        # Создаём первый коммит, чтобы появилась ветка.
+        (repo / "initial.txt").write_text("initial")
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo),
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=str(repo),
+            capture_output=True,
+        )
+
         result = git_branch(str(repo))
 
         assert result.success
