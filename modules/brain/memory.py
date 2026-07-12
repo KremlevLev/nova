@@ -4,7 +4,8 @@ import json
 import re
 import math
 from typing import List, Dict, Any, Optional
-
+from modules.storage.memories import MemoryStore
+from modules.storage.database import Database
 MEMORY_FILE = "data/memory/local_memory.json"
 
 class BaseMemory:
@@ -21,10 +22,23 @@ class LocalMemory(BaseMemory):
     Полностью совместима с Python 3.14, работает без нейросетей и C++ библиотек.
     Потребляет 0 МБ оперативной памяти в простое.
     """
-    def __init__(self, storage_path: str = MEMORY_FILE):
-        self.storage_path = storage_path
-        self.documents: List[Dict[str, Any]] = []
-        self._load_storage()
+def __init__(
+    self,
+    storage_path: str = MEMORY_FILE,
+    *,
+    database: Database | None = None,
+) -> None:
+    self.storage_path = storage_path
+    self.documents: list[Dict[str, Any]] = []
+    self._load_storage()
+
+    if database is not None:
+        self.sqlite_store = MemoryStore(
+            database
+        )
+    else:
+        self.sqlite_store = None
+
 
     def _tokenize(self, text: str) -> List[str]:
         """Очищает текст, выделяет слова и делает простейший русский стемминг (срез окончаний)"""

@@ -853,3 +853,88 @@ git_tools = [
 ]
 
 ALL_TOOLS.extend(git_tools)
+
+memory_store_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": (
+                "Сохраняет факт в долговременную память."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                    },
+                    "value": {
+                        "type": "string",
+                    },
+                    "category": {
+                        "type": "string",
+                    },
+                },
+                "required": [
+                    "key",
+                    "value",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": (
+                "Ищет в долговременной памяти."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_memory",
+            "description": (
+                "Удаляет факт из памяти по ключу."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                    },
+                },
+                "required": ["key"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_all_memories",
+            "description": (
+                "Очищает всю долговременную память."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(memory_store_tools)

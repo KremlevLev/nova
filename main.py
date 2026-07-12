@@ -3,6 +3,12 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from modules.storage.database import Database
+from modules.storage.conversations import (
+    ConversationStore,
+)
+from modules.storage.memories import MemoryStore
+
 from modules.windows.git_tools import (
     git_status,
     git_diff,
@@ -91,6 +97,11 @@ from modules.ui.overlay import (
 )
 
 process_manager = ProcessManager()
+database = Database()
+conversation_store = ConversationStore(
+    database
+)
+memory_store = MemoryStore(database)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -153,6 +164,46 @@ def build_handlers(
         type_text=type_text,
         get_active_window_title=get_active_window_title,
     )
+
+    def save_memory_handler(
+        key: str,
+        value: str,
+        category: str = "general",
+    ) -> str:
+        memory_store.save(
+            key,
+            value,
+            category=category,
+        )
+        return f"Запомнила: {key} = {value}"
+
+
+    def search_memory_handler(
+        query: str,
+    ) -> str:
+        results = memory_store.search(query)
+
+        if not results:
+            return "Ничего не найдено."
+
+        return "\n".join(
+            f"- {r['key']}: {r['value']}"
+            for r in results
+        )
+
+
+    def delete_memory_handler(
+        key: str,
+    ) -> str:
+        memory_store.delete(key)
+        return f"Удалила из памяти: {key}"
+
+
+    def clear_all_memories_handler() -> str:
+        memory_store.clear_all()
+        return "Вся память очищена."
+
+
     def start_process_handler(
         command: list[str],
         label: str | None = None,
@@ -270,7 +321,12 @@ def build_handlers(
         "git_commit": git_commit,
         "git_branch": git_branch,
         "inspect_project": inspect_project,
-
+        "save_memory": save_memory_handler,
+        "search_memory": search_memory_handler,
+        "delete_memory": delete_memory_handler,
+        "clear_all_memories": (
+            clear_all_memories_handler
+        ),
     }
 
 

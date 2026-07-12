@@ -114,6 +114,18 @@ def select_tool_names(
         "rollback",
         "восстанови файл",
     )
+    memory_store_markers = (
+        "запомни",
+        "сохрани в память",
+        "найди в памяти",
+        "удали из памяти",
+        "очисти память",
+        "что ты помнишь",
+    )
+
+    if contains_any(text, memory_store_markers):
+        selected |= MEMORY_STORE_TOOLS
+
     git_markers = (
         "git",
         "коммит",
@@ -354,4 +366,11 @@ GIT_TOOLS = {
 
 PROJECT_TOOLS = {
     "inspect_project",
+}
+
+MEMORY_STORE_TOOLS = {
+    "save_memory",
+    "search_memory",
+    "delete_memory",
+    "clear_all_memories",
 }
