@@ -6,32 +6,24 @@ import inspect
 import json
 import logging
 import time
-from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, Callable
 
 from core.config import TOOL_TIMEOUT_SECONDS
-from modules.domain.results import ToolResult
+from modules.domain.results import (
+    ToolResult,
+    ToolWarning,
+    VerificationResult,
+)
+from modules.tools.base import (
+    RegisteredTool,
+    RiskLevel,
+    ToolCategory,
+    ToolContext,
+    ToolDefinition,
+)
 
 
 logger = logging.getLogger("ToolRuntime")
-
-
-class RiskLevel(StrEnum):
-    READ_ONLY = "read_only"
-    LOW = "low"
-    WRITE = "write"
-    EXECUTE = "execute"
-    DESTRUCTIVE = "destructive"
-
-
-@dataclass(slots=True)
-class RegisteredTool:
-    name: str
-    schema: dict[str, Any]
-    handler: Callable[..., Any]
-    risk: RiskLevel = RiskLevel.LOW
-    timeout_seconds: float = TOOL_TIMEOUT_SECONDS
 
 
 ERROR_MARKERS = (
@@ -50,7 +42,7 @@ ERROR_MARKERS = (
 )
 
 
-RISK_BY_TOOL = {
+RISK_BY_TOOL: dict[str, RiskLevel] = {
     "get_current_time": RiskLevel.READ_ONLY,
     "get_system_status": RiskLevel.READ_ONLY,
     "search_in_memory": RiskLevel.READ_ONLY,
@@ -66,6 +58,7 @@ RISK_BY_TOOL = {
     "focus_window": RiskLevel.LOW,
 
     "type_text": RiskLevel.WRITE,
+    "write_in_application": RiskLevel.WRITE,
     "set_clipboard_content": RiskLevel.WRITE,
     "create_quick_note": RiskLevel.WRITE,
     "set_reminder": RiskLevel.WRITE,
@@ -81,13 +74,131 @@ RISK_BY_TOOL = {
     "close_application": RiskLevel.DESTRUCTIVE,
     "manage_windows": RiskLevel.DESTRUCTIVE,
     "execute_cmd_command": RiskLevel.DESTRUCTIVE,
-    "write_in_application": RiskLevel.WRITE,
+}
+
+
+CATEGORY_BY_TOOL: dict[str, ToolCategory] = {
+    "get_current_time": ToolCategory.SYSTEM_READ,
+    "get_system_status": ToolCategory.SYSTEM_READ,
+
+    "open_application": ToolCategory.APPLICATION,
+    "close_application": ToolCategory.APPLICATION,
+    "focus_window": ToolCategory.GUI_WRITE,
+    "list_active_windows": ToolCategory.GUI_READ,
+
+    "type_text": ToolCategory.GUI_WRITE,
+    "write_in_application": ToolCategory.GUI_WRITE,
+    "mouse_click": ToolCategory.GUI_WRITE,
+    "press_keyboard_combination": (
+        ToolCategory.GUI_WRITE
+    ),
+
+    "get_clipboard_content": (
+        ToolCategory.CLIPBOARD_READ
+    ),
+    "set_clipboard_content": (
+        ToolCategory.CLIPBOARD_WRITE
+    ),
+
+    "search_web_tavily": ToolCategory.WEB_READ,
+    "scrape_webpage": ToolCategory.WEB_READ,
+    "open_website": ToolCategory.NETWORK_WRITE,
+
+    "save_to_memory": ToolCategory.MEMORY,
+    "search_in_memory": ToolCategory.MEMORY,
+
+    "set_reminder": ToolCategory.REMINDER,
+    "get_active_reminders": ToolCategory.REMINDER,
+    "set_timer": ToolCategory.REMINDER,
+
+    "run_terminal_command": ToolCategory.TERMINAL,
+    "execute_cmd_command": ToolCategory.TERMINAL,
+    "execute_python_code": ToolCategory.DEVELOPMENT,
+    "create_workspace_project": (
+        ToolCategory.DEVELOPMENT
+    ),
+}
+
+
+IDEMPOTENT_TOOLS = {
+    "get_current_time",
+    "get_system_status",
+    "search_in_memory",
+    "get_active_reminders",
+    "list_active_windows",
+    "get_clipboard_content",
+    "search_web_tavily",
+    "scrape_webpage",
 }
 
 
 def _looks_like_error(text: str) -> bool:
     normalized = text.lower()
-    return any(marker in normalized for marker in ERROR_MARKERS)
+
+    return any(
+        marker in normalized
+        for marker in ERROR_MARKERS
+    )
+
+
+def adapt_legacy_result(
+    value: Any,
+) -> ToolResult:
+    if isinstance(value, ToolResult):
+        return value
+
+    if isinstance(value, tuple) and len(value) == 2:
+        success, message = value
+
+        if isinstance(success, bool):
+            if success:
+                return ToolResult.ok(
+                    str(message),
+                    verification=VerificationResult(
+                        verified=None,
+                        method="legacy_result",
+                        confidence=0.5,
+                        details=(
+                            "Legacy handler сообщил об успехе."
+                        ),
+                    ),
+                )
+
+            return ToolResult.failure(
+                "LEGACY_TOOL_FAILED",
+                str(message),
+            )
+
+    if value is None:
+        return ToolResult.ok(
+            "Операция завершена без текстового результата.",
+            verification=VerificationResult(
+                verified=None,
+                method="not_performed",
+                confidence=0.0,
+            ),
+        )
+
+    message = str(value)
+
+    if _looks_like_error(message):
+        return ToolResult.failure(
+            "LEGACY_TOOL_ERROR",
+            message,
+        )
+
+    return ToolResult.ok(
+        message,
+        verification=VerificationResult(
+            verified=None,
+            method="legacy_text_result",
+            confidence=0.4,
+            details=(
+                "Результат адаптирован из строкового ответа."
+            ),
+        ),
+    )
+
 
 def strip_unknown_properties(
     value: Any,
@@ -95,8 +206,14 @@ def strip_unknown_properties(
 ) -> Any:
     expected_type = schema.get("type")
 
-    if expected_type == "object" and isinstance(value, dict):
-        properties = schema.get("properties", {})
+    if (
+        expected_type == "object"
+        and isinstance(value, dict)
+    ):
+        properties = schema.get(
+            "properties",
+            {},
+        )
 
         return {
             key: strip_unknown_properties(
@@ -107,43 +224,24 @@ def strip_unknown_properties(
             if key in properties
         }
 
-    if expected_type == "array" and isinstance(value, list):
-        item_schema = schema.get("items", {})
+    if (
+        expected_type == "array"
+        and isinstance(value, list)
+    ):
+        item_schema = schema.get(
+            "items",
+            {},
+        )
 
         return [
-            strip_unknown_properties(item, item_schema)
+            strip_unknown_properties(
+                item,
+                item_schema,
+            )
             for item in value
         ]
 
     return value
-
-
-def adapt_legacy_result(value: Any) -> ToolResult:
-    if isinstance(value, ToolResult):
-        return value
-
-    if isinstance(value, tuple) and len(value) == 2:
-        success, message = value
-        if isinstance(success, bool):
-            if success:
-                return ToolResult.ok(str(message))
-            return ToolResult.failure(
-                "LEGACY_TOOL_FAILED",
-                str(message),
-            )
-
-    if value is None:
-        return ToolResult.ok("Операция завершена без текстового результата.")
-
-    message = str(value)
-
-    if _looks_like_error(message):
-        return ToolResult.failure(
-            "LEGACY_TOOL_ERROR",
-            message,
-        )
-
-    return ToolResult.ok(message)
 
 
 def validate_json_schema(
@@ -156,18 +254,31 @@ def validate_json_schema(
 
     if expected_type == "object":
         if not isinstance(value, dict):
-            return [f"{path} должен быть объектом."]
+            return [
+                f"{path} должен быть объектом."
+            ]
 
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
+        properties = schema.get(
+            "properties",
+            {},
+        )
+        required = schema.get(
+            "required",
+            [],
+        )
 
         for required_name in required:
             if required_name not in value:
                 errors.append(
-                    f"Отсутствует обязательный параметр '{required_name}'."
+                    (
+                        "Отсутствует обязательный параметр "
+                        f"'{required_name}'."
+                    )
                 )
 
-        if schema.get("additionalProperties") is False:
+        if schema.get(
+            "additionalProperties"
+        ) is False:
             for key in value:
                 if key not in properties:
                     errors.append(
@@ -176,6 +287,7 @@ def validate_json_schema(
 
         for key, child_value in value.items():
             child_schema = properties.get(key)
+
             if child_schema:
                 errors.extend(
                     validate_json_schema(
@@ -187,15 +299,37 @@ def validate_json_schema(
 
     elif expected_type == "array":
         if not isinstance(value, list):
-            return [f"{path} должен быть массивом."]
+            return [
+                f"{path} должен быть массивом."
+            ]
 
-        max_items = schema.get("maxItems")
-        if max_items is not None and len(value) > max_items:
+        minimum_items = schema.get("minItems")
+        maximum_items = schema.get("maxItems")
+
+        if (
+            minimum_items is not None
+            and len(value) < minimum_items
+        ):
             errors.append(
-                f"{path} содержит больше {max_items} элементов."
+                (
+                    f"{path} должен содержать не менее "
+                    f"{minimum_items} элементов."
+                )
+            )
+
+        if (
+            maximum_items is not None
+            and len(value) > maximum_items
+        ):
+            errors.append(
+                (
+                    f"{path} содержит больше "
+                    f"{maximum_items} элементов."
+                )
             )
 
         item_schema = schema.get("items")
+
         if item_schema:
             for index, item in enumerate(value):
                 errors.extend(
@@ -208,46 +342,99 @@ def validate_json_schema(
 
     elif expected_type == "string":
         if not isinstance(value, str):
-            return [f"{path} должен быть строкой."]
+            return [
+                f"{path} должен быть строкой."
+            ]
 
-        min_length = schema.get("minLength")
-        max_length = schema.get("maxLength")
+        minimum_length = schema.get(
+            "minLength"
+        )
+        maximum_length = schema.get(
+            "maxLength"
+        )
 
-        if min_length is not None and len(value) < min_length:
+        if (
+            minimum_length is not None
+            and len(value) < minimum_length
+        ):
             errors.append(
-                f"{path} короче допустимого значения."
+                (
+                    f"{path} должен содержать не менее "
+                    f"{minimum_length} символов."
+                )
             )
 
-        if max_length is not None and len(value) > max_length:
+        if (
+            maximum_length is not None
+            and len(value) > maximum_length
+        ):
             errors.append(
-                f"{path} превышает лимит {max_length} символов."
+                (
+                    f"{path} превышает лимит "
+                    f"{maximum_length} символов."
+                )
             )
 
     elif expected_type == "integer":
-        if isinstance(value, bool) or not isinstance(value, int):
-            return [f"{path} должен быть целым числом."]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+        ):
+            return [
+                f"{path} должен быть целым числом."
+            ]
 
         minimum = schema.get("minimum")
         maximum = schema.get("maximum")
 
-        if minimum is not None and value < minimum:
-            errors.append(f"{path} должен быть не меньше {minimum}.")
+        if (
+            minimum is not None
+            and value < minimum
+        ):
+            errors.append(
+                f"{path} должен быть не меньше {minimum}."
+            )
 
-        if maximum is not None and value > maximum:
-            errors.append(f"{path} должен быть не больше {maximum}.")
+        if (
+            maximum is not None
+            and value > maximum
+        ):
+            errors.append(
+                f"{path} должен быть не больше {maximum}."
+            )
+
+    elif expected_type == "number":
+        if (
+            isinstance(value, bool)
+            or not isinstance(
+                value,
+                (int, float),
+            )
+        ):
+            return [
+                f"{path} должен быть числом."
+            ]
 
     elif expected_type == "boolean":
         if not isinstance(value, bool):
-            return [f"{path} должен быть логическим значением."]
-
-    elif expected_type == "number":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return [f"{path} должен быть числом."]
+            return [
+                (
+                    f"{path} должен быть "
+                    "логическим значением."
+                )
+            ]
 
     enum_values = schema.get("enum")
-    if enum_values is not None and value not in enum_values:
+
+    if (
+        enum_values is not None
+        and value not in enum_values
+    ):
         errors.append(
-            f"{path} должен иметь одно из значений: {enum_values}."
+            (
+                f"{path} должен иметь одно из "
+                f"значений: {enum_values}."
+            )
         )
 
     return errors
@@ -255,7 +442,26 @@ def validate_json_schema(
 
 class ToolRegistry:
     def __init__(self) -> None:
-        self._tools: dict[str, RegisteredTool] = {}
+        self._tools: dict[
+            str,
+            ToolDefinition,
+        ] = {}
+
+    def register_definition(
+        self,
+        definition: ToolDefinition,
+    ) -> None:
+        if definition.name in self._tools:
+            raise ValueError(
+                (
+                    f"Инструмент '{definition.name}' "
+                    "зарегистрирован повторно."
+                )
+            )
+
+        self._tools[
+            definition.name
+        ] = definition
 
     def register(
         self,
@@ -263,67 +469,106 @@ class ToolRegistry:
         schema: dict[str, Any],
         handler: Callable[..., Any],
         risk: RiskLevel | None = None,
-        timeout_seconds: float = TOOL_TIMEOUT_SECONDS,
+        category: ToolCategory | None = None,
+        timeout_seconds: float = (
+            TOOL_TIMEOUT_SECONDS
+        ),
     ) -> None:
-        function_schema = schema.get("function", {})
-        name = function_schema.get("name")
-
-        if not isinstance(name, str) or not name:
-            raise ValueError("Схема инструмента не содержит имя.")
-
-        if name in self._tools:
-            raise ValueError(
-                f"Инструмент '{name}' зарегистрирован повторно."
-            )
-
-        parameters = function_schema.setdefault(
-            "parameters",
-            {
-                "type": "object",
-                "properties": {},
-            },
-        )
-        parameters.setdefault("additionalProperties", False)
-
-        self._tools[name] = RegisteredTool(
-            name=name,
+        definition = ToolDefinition.from_legacy(
             schema=schema,
             handler=handler,
-            risk=risk or RISK_BY_TOOL.get(name, RiskLevel.LOW),
+            risk=(
+                risk
+                or RISK_BY_TOOL.get(
+                    schema.get(
+                        "function",
+                        {},
+                    ).get("name", ""),
+                    RiskLevel.LOW,
+                )
+            ),
+            category=(
+                category
+                or CATEGORY_BY_TOOL.get(
+                    schema.get(
+                        "function",
+                        {},
+                    ).get("name", ""),
+                    ToolCategory.UNKNOWN,
+                )
+            ),
             timeout_seconds=timeout_seconds,
+            idempotent=(
+                schema.get(
+                    "function",
+                    {},
+                ).get("name")
+                in IDEMPOTENT_TOOLS
+            ),
         )
+
+        self.register_definition(definition)
 
     @classmethod
     def from_legacy(
         cls,
         schemas: list[dict[str, Any]],
-        handlers: dict[str, Callable[..., Any]],
+        handlers: dict[
+            str,
+            Callable[..., Any],
+        ],
     ) -> "ToolRegistry":
         registry = cls()
 
         schema_names = {
-            item.get("function", {}).get("name")
+            item.get(
+                "function",
+                {},
+            ).get("name")
             for item in schemas
         }
+
+        schema_names.discard(None)
+
         handler_names = set(handlers)
 
-        missing_handlers = schema_names - handler_names
-        missing_schemas = handler_names - schema_names
+        missing_handlers = (
+            schema_names - handler_names
+        )
+        missing_schemas = (
+            handler_names - schema_names
+        )
 
         if missing_handlers:
             raise ValueError(
-                "Для схем отсутствуют обработчики: "
-                + ", ".join(sorted(missing_handlers))
+                (
+                    "Для схем отсутствуют обработчики: "
+                    + ", ".join(
+                        sorted(missing_handlers)
+                    )
+                )
             )
 
         if missing_schemas:
             raise ValueError(
-                "Для обработчиков отсутствуют схемы: "
-                + ", ".join(sorted(missing_schemas))
+                (
+                    "Для обработчиков отсутствуют схемы: "
+                    + ", ".join(
+                        sorted(missing_schemas)
+                    )
+                )
             )
 
         for schema in schemas:
-            name = schema["function"]["name"]
+            function_schema = schema.get(
+                "function",
+                {},
+            )
+            name = function_schema.get("name")
+
+            if not isinstance(name, str):
+                continue
+
             registry.register(
                 schema=schema,
                 handler=handlers[name],
@@ -335,150 +580,327 @@ class ToolRegistry:
     def names(self) -> set[str]:
         return set(self._tools)
 
+    def definitions(
+        self,
+    ) -> list[ToolDefinition]:
+        return list(self._tools.values())
+
     def schemas(
         self,
         names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         if names is None:
             return [
-                tool.schema
-                for tool in self._tools.values()
+                definition.to_openai_schema()
+                for definition
+                in self._tools.values()
             ]
 
         return [
-            tool.schema
-            for name, tool in self._tools.items()
+            definition.to_openai_schema()
+            for name, definition
+            in self._tools.items()
             if name in names
         ]
 
-
-    def get(self, name: str) -> RegisteredTool | None:
+    def get(
+        self,
+        name: str,
+    ) -> ToolDefinition | None:
         return self._tools.get(name)
 
 
 class ToolRunner:
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+    ) -> None:
         self.registry = registry
 
-    async def execute(
-        self,
+    @staticmethod
+    def _parse_arguments(
         tool_call: dict[str, Any],
-    ) -> ToolResult:
+    ) -> tuple[
+        str | None,
+        dict[str, Any] | None,
+        ToolResult | None,
+    ]:
         function = tool_call.get("function")
+
         if not isinstance(function, dict):
-            return ToolResult.failure(
-                "INVALID_TOOL_CALL",
-                "Вызов инструмента не содержит объекта function.",
+            return (
+                None,
+                None,
+                ToolResult.failure(
+                    "INVALID_TOOL_CALL",
+                    (
+                        "Вызов инструмента не содержит "
+                        "объекта function."
+                    ),
+                ),
             )
 
         name = function.get("name")
-        if not isinstance(name, str):
-            return ToolResult.failure(
-                "INVALID_TOOL_NAME",
-                "Не указано имя инструмента.",
+
+        if not isinstance(name, str) or not name:
+            return (
+                None,
+                None,
+                ToolResult.failure(
+                    "INVALID_TOOL_NAME",
+                    "Не указано имя инструмента.",
+                ),
             )
 
-        registered = self.registry.get(name)
-        if registered is None:
-            return ToolResult.failure(
-                "TOOL_NOT_FOUND",
-                f"Инструмент '{name}' не зарегистрирован.",
-            )
-
-        raw_arguments = function.get("arguments") or "{}"
+        raw_arguments = (
+            function.get("arguments")
+            or "{}"
+        )
 
         try:
             arguments = (
                 raw_arguments
-                if isinstance(raw_arguments, dict)
+                if isinstance(
+                    raw_arguments,
+                    dict,
+                )
                 else json.loads(raw_arguments)
             )
-        except json.JSONDecodeError as exc:
-            return ToolResult.failure(
-                "INVALID_ARGUMENTS_JSON",
-                f"Поврежден JSON аргументов '{name}': {exc}",
+        except (
+            json.JSONDecodeError,
+            TypeError,
+        ) as exc:
+            return (
+                name,
+                None,
+                ToolResult.failure(
+                    "INVALID_ARGUMENTS_JSON",
+                    (
+                        f"Повреждён JSON аргументов "
+                        f"'{name}': {exc}"
+                    ),
+                ),
             )
 
         if not isinstance(arguments, dict):
-            return ToolResult.failure(
-                "INVALID_ARGUMENTS_TYPE",
-                "Аргументы инструмента должны быть объектом.",
+            return (
+                name,
+                None,
+                ToolResult.failure(
+                    "INVALID_ARGUMENTS_TYPE",
+                    (
+                        "Аргументы инструмента должны "
+                        "быть объектом."
+                    ),
+                ),
             )
 
-        parameters_schema = registered.schema["function"].get(
-            "parameters",
-            {
-                "type": "object",
-                "properties": {},
-            },
+        return name, arguments, None
+
+    async def execute(
+        self,
+        tool_call: dict[str, Any],
+        *,
+        context: ToolContext | None = None,
+    ) -> ToolResult:
+        name, arguments, parse_error = (
+            self._parse_arguments(tool_call)
         )
-        original_arguments = arguments
+
+        if parse_error is not None:
+            return parse_error
+
+        assert name is not None
+        assert arguments is not None
+
+        definition = self.registry.get(name)
+
+        if definition is None:
+            return ToolResult.failure(
+                "TOOL_NOT_FOUND",
+                (
+                    f"Инструмент '{name}' "
+                    "не зарегистрирован."
+                ),
+            )
+
+        actual_context = (
+            context
+            if context is not None
+            else ToolContext.create()
+        )
+
+        actual_context.cancellation.raise_if_cancelled()
+
+        original_argument_names = set(arguments)
+
         arguments = strip_unknown_properties(
             arguments,
-            parameters_schema,
+            definition.parameters,
         )
 
         removed_arguments = sorted(
-            set(original_arguments) - set(arguments)
+            original_argument_names
+            - set(arguments)
         )
-
-        if removed_arguments:
-            logger.warning(
-                "Из вызова %s удалены неизвестные параметры: %s",
-                name,
-                removed_arguments,
-            )
 
         validation_errors = validate_json_schema(
             arguments,
-            parameters_schema,
+            definition.parameters,
         )
+
         if validation_errors:
             return ToolResult.failure(
                 "ARGUMENT_VALIDATION_FAILED",
                 " ".join(validation_errors),
-                data={"errors": validation_errors},
+                data={
+                    "errors": validation_errors,
+                    "operation_id": (
+                        actual_context.operation_id
+                    ),
+                },
             )
 
         started_at = time.perf_counter()
 
+        logger.info(
+            (
+                "Инструмент запущен: name=%s "
+                "operation_id=%s risk=%s category=%s"
+            ),
+            definition.name,
+            actual_context.operation_id,
+            definition.risk.value,
+            definition.category.value,
+        )
+
         try:
-            if inspect.iscoroutinefunction(registered.handler):
-                execution = registered.handler(**arguments)
+            call_arguments = dict(arguments)
+
+            if definition.inject_context:
+                call_arguments["context"] = (
+                    actual_context
+                )
+
+            if inspect.iscoroutinefunction(
+                definition.handler
+            ):
+                execution = definition.handler(
+                    **call_arguments
+                )
             else:
                 execution = asyncio.to_thread(
-                    registered.handler,
-                    **arguments,
+                    definition.handler,
+                    **call_arguments,
                 )
 
             raw_result = await asyncio.wait_for(
                 execution,
-                timeout=registered.timeout_seconds,
+                timeout=(
+                    definition.timeout_seconds
+                ),
             )
 
-            result = adapt_legacy_result(raw_result)
-            result.data.setdefault(
-                "duration_ms",
-                round((time.perf_counter() - started_at) * 1000),
+            result = adapt_legacy_result(
+                raw_result
             )
-            result.data.setdefault("risk", registered.risk.value)
-            return result
 
         except asyncio.TimeoutError:
-            return ToolResult.failure(
+            result = ToolResult.failure(
                 "TOOL_TIMEOUT",
                 (
-                    f"Инструмент '{name}' превысил лимит "
-                    f"{registered.timeout_seconds:.0f} секунд."
+                    f"Инструмент '{name}' превысил "
+                    f"лимит "
+                    f"{definition.timeout_seconds:.0f} "
+                    "секунд."
                 ),
                 retryable=True,
             )
+
+        except asyncio.CancelledError:
+            actual_context.cancellation.cancel()
+
+            result = ToolResult.failure(
+                "TOOL_CANCELLED",
+                (
+                    f"Инструмент '{name}' был отменён."
+                ),
+                retryable=False,
+            )
+
         except Exception as exc:
             logger.exception(
-                "Ошибка выполнения инструмента %s.",
+                (
+                    "Ошибка выполнения инструмента %s, "
+                    "operation_id=%s."
+                ),
                 name,
+                actual_context.operation_id,
             )
-            return ToolResult.failure(
+
+            result = ToolResult.failure(
                 "TOOL_EXECUTION_FAILED",
-                f"Ошибка выполнения '{name}': {exc}",
+                (
+                    f"Ошибка выполнения "
+                    f"'{name}': {exc}"
+                ),
             )
+
+        duration_ms = round(
+            (
+                time.perf_counter()
+                - started_at
+            )
+            * 1000
+        )
+
+        result.duration_ms = duration_ms
+
+        result.data.setdefault(
+            "operation_id",
+            actual_context.operation_id,
+        )
+        result.data.setdefault(
+            "session_id",
+            actual_context.session_id,
+        )
+        result.data.setdefault(
+            "turn_id",
+            actual_context.turn_id,
+        )
+        result.data.setdefault(
+            "risk",
+            definition.risk.value,
+        )
+        result.data.setdefault(
+            "category",
+            definition.category.value,
+        )
+        result.data.setdefault(
+            "idempotent",
+            definition.idempotent,
+        )
+
+        if removed_arguments:
+            result.add_warning(
+                "UNKNOWN_ARGUMENTS_REMOVED",
+                (
+                    "Удалены неизвестные параметры: "
+                    + ", ".join(removed_arguments)
+                ),
+            )
+
+            logger.info(
+            (
+                "Инструмент завершён: name=%s "
+                "operation_id=%s success=%s "
+                "code=%s duration_ms=%s"
+            ),
+            definition.name,
+            actual_context.operation_id,
+            result.success,
+            result.code,
+            result.duration_ms,
+        )
+
+        return result

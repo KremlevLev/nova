@@ -1,10 +1,14 @@
 # modules/application/agent.py
 from __future__ import annotations
-
+import uuid
 import json
 import logging
 import re
 from typing import Any
+from modules.application.reporting import (
+    build_assistant_response_from_tools,
+)
+from modules.tools.base import ToolContext
 
 from core.config import (
     MAX_AGENT_TURNS,
@@ -176,13 +180,20 @@ class AgentService:
         llm: NovaLLM,
         registry: ToolRegistry,
         runner: ToolRunner,
+        *,
+        session_id: str | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
         self.runner = runner
 
-        # История остается общей с NovaLLM для совместимости.
         self.history = llm.history
+
+        self.session_id = (
+            session_id
+            or f"session_{uuid.uuid4().hex}"
+        )
+
 
     async def _request_model(
         self,
@@ -464,45 +475,19 @@ class AgentService:
         original_complexity: TaskComplexity,
         budget_exhausted: bool,
     ) -> AssistantResponse:
+        """
+        Формирует итог локально, без дополнительного запроса к LLM.
+
+        user_text и original_complexity сохранены в сигнатуре для
+        обратной совместимости с существующими вызовами.
+        """
         del user_text
         del original_complexity
 
-        final_text = self._deterministic_tool_summary(
-            tool_results
+        return build_assistant_response_from_tools(
+            tool_results,
+            budget_exhausted=budget_exhausted,
         )
-
-        any_failure = any(
-            not bool(
-                item.get("result", {}).get("success")
-            )
-            for item in tool_results
-        )
-
-        response_success = (
-            bool(tool_results)
-            and not any_failure
-            and not budget_exhausted
-        )
-
-        error_code: str | None = None
-
-        if not tool_results:
-            error_code = "NO_CONFIRMED_TOOL_RESULTS"
-        elif budget_exhausted:
-            error_code = "AGENT_BUDGET_EXHAUSTED"
-        elif any_failure:
-            error_code = "ONE_OR_MORE_TOOLS_FAILED"
-
-        return AssistantResponse(
-            display_text=final_text,
-            speech_text=self._deterministic_speech_summary(
-                tool_results
-            ),
-            success=response_success,
-            error_code=error_code,
-        )
-
-
     async def run(
         self,
         user_text: str,
@@ -511,6 +496,9 @@ class AgentService:
         use_tools: bool = True,
         has_image: bool = False,
     ) -> AssistantResponse:
+        turn_id = (
+            f"turn_{uuid.uuid4().hex}"
+        )
         actual_user_content = (
             user_content
             if user_content is not None
@@ -715,8 +703,25 @@ class AgentService:
                     tool_call["function"]["name"],
                 )
 
+                tool_context = ToolContext.create(
+                    session_id=self.session_id,
+                    turn_id=turn_id,
+                    source="assistant",
+                    metadata={
+                        "user_request": user_text,
+                        "has_image": has_image,
+                        "agent_complexity": (
+                            complexity.value
+                        ),
+                        "tool_call_id": (
+                            tool_call.get("id")
+                        ),
+                    },
+                )
+
                 result = await self.runner.execute(
-                    tool_call
+                    tool_call,
+                    context=tool_context,
                 )
                 total_tool_calls += 1
 
