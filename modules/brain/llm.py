@@ -44,8 +44,9 @@ class NovaLLM:
     def reset_context(self) -> None:
         self.history.clear()
 
-    def provider_health(self):
+    def provider_health(self) -> dict[str, Any]:
         return self.gateway.health_snapshot()
+
 
 __all__ = [
     "NovaLLM",
