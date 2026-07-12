@@ -9,6 +9,7 @@ import sys
 from typing import Any, Callable
 from modules.domain.results import ToolResult
 from modules.tools.skills import WindowsSkills
+from modules.domain.windows_context import WindowsContext
 
 import keyboard
 import winsound
@@ -55,6 +56,7 @@ from modules.tools.os_utils import (
     take_screenshot,
     type_text,
     run_terminal_command,
+    get_active_window_title,
 )
 from modules.tools.registry import ALL_TOOLS
 from modules.tools.runtime import ToolRegistry, ToolRunner
@@ -127,6 +129,7 @@ def build_handlers(
         focus_window=focus_window,
         press_hotkey=press_keyboard_combination,
         type_text=type_text,
+        get_active_window_title=get_active_window_title
     )
 
     def launch_application(app_name: str):
@@ -220,6 +223,7 @@ async def run_voice_loop(
     agent: AgentService,
     listener: VoiceListener,
     app_launcher: WindowsAppIndexer,
+    windows_context: WindowsContext,
 ) -> None:
     while not runtime.is_shutting_down:
         if not runtime.is_active:
@@ -274,8 +278,30 @@ async def run_voice_loop(
             app_launcher,
         )
         if is_launch:
+            # Извлекаем имя приложения из исходной команды.
+            lowered_request = user_request.lower().strip()
+
+            for launch_verb in (
+                "открой",
+                "включи",
+                "запусти",
+                "запуск",
+            ):
+                if lowered_request.startswith(
+                    launch_verb + " "
+                ):
+                    application_name = user_request[
+                        len(launch_verb):
+                    ].strip(" .,!?:;")
+
+                    windows_context.set_application(
+                        application_name
+                    )
+                    break
+                
             await speech.say(launch_response)
             continue
+        
 
         is_close, close_response = await asyncio.to_thread(
             check_instant_app_close,
@@ -331,25 +357,44 @@ async def run_voice_loop(
                     has_image = False
             else:
                 has_image = False
+        resolved_request = (
+            windows_context.resolve_reference(
+                user_request
+            )
+        )
 
         response = await agent.run(
-            user_request,
-            user_content=user_content,
-            use_tools=should_pass_tools(user_request),
+            resolved_request,
+            user_content=(
+                user_content
+                if user_content != user_request
+                else resolved_request
+            ),
+            use_tools=should_pass_tools(resolved_request),
             has_image=has_image,
         )
 
+
         print(f"\n[Nova]: {response.display_text}\n")
 
-        await speech.say(
-            response.speech_text,
-            priority=5,
-        )
+        try:
+            await speech.say(
+                response.speech_text,
+                priority=5,
+            )
+        except asyncio.CancelledError:
+            if runtime.is_shutting_down:
+                raise
+            
+            logger.info(
+                "Озвучивание ответа прервано пользователем."
+            )
+
 
 
 async def async_main() -> None:
     instance_lock = acquire_instance_lock()
-
+    windows_context = WindowsContext()
     start_overlay()
     runtime = RuntimeState(update_status)
     speech = SpeechService(runtime)
@@ -451,9 +496,11 @@ async def async_main() -> None:
             agent,
             listener,
             app_launcher,
+            windows_context,
         ),
         name="nova-voice-loop",
     )
+
 
     try:
         await speech.say(

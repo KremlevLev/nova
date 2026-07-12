@@ -21,12 +21,18 @@ class WindowsSkills:
         focus_window: Callable[..., str],
         press_hotkey: Callable[..., str],
         type_text: Callable[..., str],
+        get_active_window_title: Callable[..., str],
     ) -> None:
         self.app_launcher = app_launcher
         self.list_windows = list_windows
         self.focus_window = focus_window
         self.press_hotkey = press_hotkey
         self.type_text = type_text
+        self.get_active_window_title = (
+        get_active_window_title
+    )
+
+        
 
     @staticmethod
     def _result_failed(result: str) -> bool:
@@ -130,6 +136,37 @@ class WindowsSkills:
                 )
 
             time.sleep(0.3)
+
+        active_title = str(
+            self.get_active_window_title()
+        ).strip()
+
+        match = self.app_launcher.find_app(
+            clean_app_name
+        )
+
+        expected_names = {
+            clean_app_name.lower(),
+        }
+
+        if match is not None:
+            expected_names.add(
+                match.matched_name.lower()
+            )
+
+        if not active_title or not any(
+            expected_name in active_title.lower()
+            for expected_name in expected_names
+        ):
+            return ToolResult.failure(
+                "ACTIVE_WINDOW_CHANGED",
+                (
+                    "Ввод отменен: активное окно больше не "
+                    f"соответствует приложению '{clean_app_name}'. "
+                    f"Текущее окно: '{active_title or 'неизвестно'}'."
+                ),
+            )
+
 
         typing_result = str(
             self.type_text(clean_text)

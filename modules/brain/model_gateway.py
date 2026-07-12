@@ -142,6 +142,57 @@ class ModelGateway:
             "openrouter": 0,
         }
         self._request_lock = asyncio.Lock()
+        self._route_cooldowns: dict[
+            tuple[str, int, str],
+            float,
+        ] = {}
+
+    def _route_identity(
+        self,
+        slot: KeySlot,
+        candidate: ModelCandidate,
+    ) -> tuple[str, int, str]:
+        return (
+            slot.provider,
+            slot.index,
+            candidate.model,
+        )
+
+
+    def _route_cooldown_remaining(
+        self,
+        slot: KeySlot,
+        candidate: ModelCandidate,
+    ) -> float:
+        cooldown_until = self._route_cooldowns.get(
+            self._route_identity(slot, candidate),
+            0.0,
+        )
+
+        return max(
+            0.0,
+            cooldown_until - time.monotonic(),
+        )
+
+
+    def _set_route_cooldown(
+        self,
+        slot: KeySlot,
+        candidate: ModelCandidate,
+        seconds: float,
+    ) -> None:
+        if seconds <= 0:
+            return
+
+        identity = self._route_identity(
+            slot,
+            candidate,
+        )
+
+        self._route_cooldowns[identity] = max(
+            self._route_cooldowns.get(identity, 0.0),
+            time.monotonic() + seconds,
+        )
 
     async def close(self) -> None:
         clients = list(self._clients.values())
@@ -594,6 +645,22 @@ class ModelGateway:
                         slot.cooldown_remaining,
                     )
                     continue
+                route_cooldown = (
+                self._route_cooldown_remaining(
+                    slot,
+                    candidate,
+                )
+            )
+
+                if route_cooldown > 0:
+                    logger.info(
+                        "%s/%s пропущен, cooldown модели %.0f сек.",
+                        slot.label,
+                        candidate.model,
+                        route_cooldown,
+                    )
+                    continue
+            
 
                 attempted_slot = True
 
@@ -613,7 +680,26 @@ class ModelGateway:
                         allow_tools=allow_tools,
                     )
                 except GatewayFailure as failure:
-                    slot.mark_failure(failure)
+                    if failure.kind in {
+                        FailureKind.AUTHENTICATION,
+                        FailureKind.DAILY_LIMIT,
+                    }:
+                        slot.mark_failure(failure)
+
+                    elif failure.kind == FailureKind.RATE_LIMIT:
+                        slot.consecutive_failures += 1
+                        slot.last_error = failure.message
+
+                        self._set_route_cooldown(
+                            slot,
+                            candidate,
+                            failure.cooldown_seconds,
+                        )
+
+                    else:
+                        slot.consecutive_failures += 1
+                        slot.last_error = failure.message
+
                     failures.append(
                         f"{candidate.identity}/{slot.label}: "
                         f"{failure.message}"
@@ -634,7 +720,26 @@ class ModelGateway:
                     break
                 except Exception as error:
                     failure = self.classify_failure(error)
-                    slot.mark_failure(failure)
+                    if failure.kind in {
+                        FailureKind.AUTHENTICATION,
+                        FailureKind.DAILY_LIMIT,
+                    }:
+                        slot.mark_failure(failure)
+                    
+                    elif failure.kind == FailureKind.RATE_LIMIT:
+                        slot.consecutive_failures += 1
+                        slot.last_error = failure.message
+                    
+                        self._set_route_cooldown(
+                            slot,
+                            candidate,
+                            failure.cooldown_seconds,
+                        )
+                    
+                    else:
+                        slot.consecutive_failures += 1
+                        slot.last_error = failure.message
+                    
                     failures.append(
                         f"{candidate.identity}/{slot.label}: "
                         f"{failure.message}"

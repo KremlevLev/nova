@@ -652,3 +652,34 @@ def focus_window(window_title_part: str) -> str:
     except Exception as e:
         return f"Не удалось сфокусироваться на окне: {e}"
     
+def get_active_window_title(*args, **kwargs) -> str:
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+
+        if not hwnd:
+            return ""
+
+        length = user32.GetWindowTextLengthW(hwnd)
+
+        if length <= 0:
+            return ""
+
+        buffer = ctypes.create_unicode_buffer(
+            length + 1
+        )
+
+        user32.GetWindowTextW(
+            hwnd,
+            buffer,
+            length + 1,
+        )
+
+        return buffer.value.strip()
+
+    except Exception as exc:
+        logger.error(
+            "Не удалось получить заголовок активного окна: %s",
+            exc,
+        )
+        return ""

@@ -15,6 +15,9 @@ APPLICATION_TOOLS = {
     "list_active_windows",
     "focus_window",
 }
+HIGH_LEVEL_APPLICATION_SKILLS = {
+    "write_in_application",
+}
 
 TEXT_INPUT_TOOLS = {
     "focus_window",
@@ -213,8 +216,15 @@ def select_tool_names(
         selected |= APPLICATION_TOOLS
 
     if contains_any(text, text_input_markers):
-        selected |= APPLICATION_TOOLS
-        selected |= TEXT_INPUT_TOOLS
+        selected |= HIGH_LEVEL_APPLICATION_SKILLS
+
+    # Оставляем инструменты наблюдения, но не выдаем модели
+    # ручную цепочку focus -> hotkey -> type_text.
+        selected |= {
+        "open_application",
+        "list_active_windows",
+    }
+
 
     if contains_any(text, web_markers):
         selected |= WEB_TOOLS

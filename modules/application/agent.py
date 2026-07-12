@@ -328,6 +328,67 @@ class AgentService:
         )
 
         return "\n".join(lines)
+    @staticmethod
+    def _deterministic_speech_summary(
+        tool_results: list[dict[str, Any]],
+    ) -> str:
+        if not tool_results:
+            return (
+                "Сэр, подтвержденных результатов "
+                "инструментов нет."
+            )
+
+        failed_results = [
+            item
+            for item in tool_results
+            if not bool(
+                item.get("result", {}).get("success")
+            )
+        ]
+
+        if failed_results:
+            first_failure = failed_results[0]
+            result = first_failure.get("result", {})
+            message = str(
+                result.get("message")
+                or "Неизвестная ошибка инструмента."
+            )
+
+            return f"Сэр, операция завершилась с ошибкой. {message}"
+
+        tool_names = {
+            str(item.get("name") or "")
+            for item in tool_results
+        }
+
+        if "write_in_application" in tool_names:
+            return (
+                "Сэр, приложение открыто, и текст введен."
+            )
+
+        if "type_text" in tool_names:
+            return (
+                "Сэр, приложение открыто, и текст введен "
+                "в активное окно."
+            )
+
+        if "create_workspace_project" in tool_names:
+            return (
+                "Сэр, проект успешно создан."
+            )
+
+        if "run_terminal_command" in tool_names:
+            return (
+                "Сэр, терминальная команда выполнена. "
+                "Результат показан на экране."
+            )
+
+        successful_count = len(tool_results)
+
+        return (
+            f"Сэр, операция выполнена. "
+            f"Успешных действий: {successful_count}."
+        )
 
     @staticmethod
     def _build_final_report_messages(
@@ -403,77 +464,12 @@ class AgentService:
         original_complexity: TaskComplexity,
         budget_exhausted: bool,
     ) -> AssistantResponse:
-        if not tool_results:
-            message = (
-                "Агент завершил обработку, но не получил "
-                "подтвержденных результатов инструментов."
-            )
+        del user_text
+        del original_complexity
 
-            return AssistantResponse(
-                display_text=message,
-                speech_text=message,
-                success=False,
-                error_code="NO_CONFIRMED_TOOL_RESULTS",
-            )
-
-        final_messages = self._build_final_report_messages(
-            user_text=user_text,
-            tool_results=tool_results,
-            budget_exhausted=budget_exhausted,
+        final_text = self._deterministic_tool_summary(
+            tool_results
         )
-
-        if original_complexity == TaskComplexity.ULTRA:
-            report_complexity = TaskComplexity.ULTRA
-        else:
-            # CHAT-модели могут не поддерживать инструменты, но здесь
-            # инструменты уже не нужны — нужен только текстовый итог.
-            report_complexity = TaskComplexity.CHAT
-
-        try:
-            generated = await self._request_model(
-                complexity=report_complexity,
-                messages=final_messages,
-                tools=None,
-                allow_tools=False,
-                has_image=False,
-            )
-
-            final_text = generated.text.strip()
-
-            # Если модель в финальном режиме каким-либо образом снова
-            # вернула tool call, не доверяем такому ответу.
-            if generated.tool_calls:
-                logger.warning(
-                    "Финальная модель снова вернула tool calls. "
-                    "Используется программный итог."
-                )
-                final_text = ""
-
-            # XML-вызовы также запрещены в финальном ответе.
-            xml_calls = extract_xml_tool_calls(
-                final_text,
-                self.registry.names,
-            )
-
-            if xml_calls:
-                logger.warning(
-                    "Финальная модель вернула XML tool calls. "
-                    "Используется программный итог."
-                )
-                final_text = ""
-
-            if not final_text:
-                final_text = self._deterministic_tool_summary(
-                    tool_results
-                )
-
-        except Exception:
-            logger.exception(
-                "Не удалось сформировать модельный итог."
-            )
-            final_text = self._deterministic_tool_summary(
-                tool_results
-            )
 
         any_failure = any(
             not bool(
@@ -483,23 +479,29 @@ class AgentService:
         )
 
         response_success = (
-            not any_failure
+            bool(tool_results)
+            and not any_failure
             and not budget_exhausted
         )
 
         error_code: str | None = None
 
-        if budget_exhausted:
+        if not tool_results:
+            error_code = "NO_CONFIRMED_TOOL_RESULTS"
+        elif budget_exhausted:
             error_code = "AGENT_BUDGET_EXHAUSTED"
         elif any_failure:
             error_code = "ONE_OR_MORE_TOOLS_FAILED"
 
         return AssistantResponse(
             display_text=final_text,
-            speech_text=final_text,
+            speech_text=self._deterministic_speech_summary(
+                tool_results
+            ),
             success=response_success,
             error_code=error_code,
         )
+
 
     async def run(
         self,
@@ -565,8 +567,9 @@ class AgentService:
                     has_image=has_image,
                 )
             except Exception as exc:
-                logger.exception(
-                    "Модельный маршрут завершился ошибкой."
+                logger.warning(
+                "Модельный маршрут завершился ошибкой: %s",
+                exc,
                 )
 
                 if executed_tool_results:

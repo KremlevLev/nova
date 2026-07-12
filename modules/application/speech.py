@@ -11,7 +11,10 @@ from modules.audio.tts import (
     speak,
     stop_speaking,
 )
-from modules.domain.state import AssistantState, RuntimeState
+from modules.domain.state import (
+    AssistantState,
+    RuntimeState,
+)
 
 
 logger = logging.getLogger("SpeechService")
@@ -23,51 +26,90 @@ def prepare_text_for_speech(
     max_total_characters: int = 700,
 ) -> str:
     """
-    Убирает из экранного ответа элементы, которые не следует озвучивать:
-    Markdown-таблицы, код, URL и лишнюю разметку.
+    Подготавливает экранный текст для синтеза речи.
+
+    Удаляет или сокращает:
+    - блоки кода;
+    - Markdown-таблицы;
+    - URL;
+    - техническую разметку;
+    - чрезмерно длинный текст.
+
+    Точный исходный ответ при этом остается доступен в display_text.
     """
-    if not text:
+    if not text or not text.strip():
         return ""
 
-    clean = text.strip()
+    original_text = text.strip()
+    clean_text = original_text
 
-    # Удаляем многострочные блоки кода.
-    clean = re.sub(
+    # Не озвучиваем многострочные блоки кода.
+    clean_text = re.sub(
         r"```.*?```",
         " Код показан на экране. ",
-        clean,
+        clean_text,
         flags=re.DOTALL,
     )
 
-    prepared_lines: list[str] = []
+    # Не озвучиваем XML-подобные вызовы инструментов.
+    clean_text = re.sub(
+        r"<function=[^>]+>.*?</function>",
+        " ",
+        clean_text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
 
-    for raw_line in clean.splitlines():
+    # Удаляем HTML/XML-разметку.
+    clean_text = re.sub(
+        r"<[^>]+>",
+        " ",
+        clean_text,
+    )
+
+    prepared_lines: list[str] = []
+    removed_table_lines = 0
+
+    for raw_line in clean_text.splitlines():
         line = raw_line.strip()
 
         if not line:
             continue
 
-        # Markdown-таблицы не озвучиваем.
+        # Markdown-таблицы.
         if line.startswith("|") and line.endswith("|"):
+            removed_table_lines += 1
             continue
 
         # Разделители Markdown-таблиц.
         if re.fullmatch(r"[\s|:\-]+", line):
+            removed_table_lines += 1
             continue
 
-        # Заголовки превращаем в обычный текст.
-        line = re.sub(r"^#{1,6}\s*", "", line)
+        # Заголовки Markdown превращаем в обычный текст.
+        line = re.sub(
+            r"^#{1,6}\s*",
+            "",
+            line,
+        )
 
-        # Убираем маркировку списка.
-        line = re.sub(r"^\s*[-*+]\s+", "", line)
-        line = re.sub(r"^\s*\d+[.)]\s+", "", line)
+        # Убираем маркеры списков.
+        line = re.sub(
+            r"^\s*[-*+]\s+",
+            "",
+            line,
+        )
+        line = re.sub(
+            r"^\s*\d+[.)]\s+",
+            "",
+            line,
+        )
 
-        # Убираем Markdown emphasis.
+        # Убираем Markdown-выделение и inline code.
         line = line.replace("**", "")
         line = line.replace("__", "")
         line = line.replace("`", "")
 
-        # URL не стоит произносить целиком.
+        # Не читаем URL целиком.
         line = re.sub(
             r"https?://\S+",
             "ссылка показана на экране",
@@ -75,17 +117,43 @@ def prepare_text_for_speech(
             flags=re.IGNORECASE,
         )
 
+        # Слишком длинные Windows-пути заменяем краткой фразой.
+        line = re.sub(
+            r"\b[A-Za-z]:\\(?:[^\\\s]+\\){2,}[^,\s]*",
+            "путь показан на экране",
+            line,
+        )
+
+        # Не читаем длинные хэши и токены.
+        line = re.sub(
+            r"\b[a-fA-F0-9]{32,}\b",
+            "идентификатор показан на экране",
+            line,
+        )
+
         prepared_lines.append(line)
 
-    clean = " ".join(prepared_lines)
-    clean = re.sub(r"\s+", " ", clean).strip()
+    clean_text = " ".join(prepared_lines)
+    clean_text = re.sub(
+        r"\s+",
+        " ",
+        clean_text,
+    ).strip()
 
-    if len(clean) <= max_total_characters:
-        return clean
+    # Если ответ состоял только из таблицы, все равно даем короткую
+    # голосовую обратную связь.
+    if not clean_text and removed_table_lines > 0:
+        return "Сэр, подробности показаны в таблице на экране."
 
-    shortened = clean[:max_total_characters]
+    if not clean_text:
+        return ""
 
-    # Обрезаем на последнем завершении предложения.
+    if len(clean_text) <= max_total_characters:
+        return clean_text
+
+    shortened = clean_text[:max_total_characters]
+
+    # Предпочитаем закончить на границе предложения.
     sentence_end = max(
         shortened.rfind("."),
         shortened.rfind("!"),
@@ -96,6 +164,7 @@ def prepare_text_for_speech(
         shortened = shortened[:sentence_end + 1]
     else:
         last_space = shortened.rfind(" ")
+
         if last_space > 0:
             shortened = shortened[:last_space]
 
@@ -110,23 +179,29 @@ def prepare_text_for_speech(
 def split_speech_chunks(
     text: str,
     *,
-    max_chunk_characters: int = 450,
+    max_chunk_characters: int = 420,
 ) -> list[str]:
     """
-    Делит речь на безопасные фрагменты для Silero.
-    """
-    clean = re.sub(r"\s+", " ", text).strip()
+    Разбивает текст на фрагменты безопасного размера для Silero.
 
-    if not clean:
+    Silero не получает строку длиннее max_chunk_characters.
+    """
+    clean_text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    ).strip()
+
+    if not clean_text:
         return []
 
     sentences = re.split(
         r"(?<=[.!?])\s+",
-        clean,
+        clean_text,
     )
 
     chunks: list[str] = []
-    current = ""
+    current_chunk = ""
 
     for sentence in sentences:
         sentence = sentence.strip()
@@ -134,66 +209,125 @@ def split_speech_chunks(
         if not sentence:
             continue
 
+        # Если одно предложение само по себе слишком длинное,
+        # разбиваем его по словам.
         if len(sentence) > max_chunk_characters:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
             words = sentence.split()
-            temporary = ""
+            word_chunk = ""
 
             for word in words:
                 candidate = (
-                    f"{temporary} {word}".strip()
+                    f"{word_chunk} {word}".strip()
                 )
 
                 if (
-                    temporary
+                    word_chunk
                     and len(candidate) > max_chunk_characters
                 ):
-                    chunks.append(temporary)
-                    temporary = word
+                    chunks.append(word_chunk)
+                    word_chunk = word
                 else:
-                    temporary = candidate
+                    word_chunk = candidate
 
-            if temporary:
-                if current:
-                    chunks.append(current)
-                    current = ""
-                chunks.append(temporary)
+            if word_chunk:
+                chunks.append(word_chunk)
 
             continue
 
-        candidate = f"{current} {sentence}".strip()
+        candidate = (
+            f"{current_chunk} {sentence}".strip()
+        )
 
         if (
-            current
+            current_chunk
             and len(candidate) > max_chunk_characters
         ):
-            chunks.append(current)
-            current = sentence
+            chunks.append(current_chunk)
+            current_chunk = sentence
         else:
-            current = candidate
+            current_chunk = candidate
 
-    if current:
-        chunks.append(current)
+    if current_chunk:
+        chunks.append(current_chunk)
 
     return chunks
 
 
 class SpeechService:
-    def __init__(self, runtime: RuntimeState) -> None:
+    """
+    Единый менеджер голосовых сообщений Nova.
+
+    Гарантии:
+    - только один TTS-worker;
+    - сообщения воспроизводятся последовательно;
+    - interrupt не отменяет голосовой цикл приложения;
+    - shutdown корректно завершает worker;
+    - устаревшие сообщения не воспроизводятся после interrupt.
+    """
+
+    def __init__(
+        self,
+        runtime: RuntimeState,
+    ) -> None:
         self.runtime = runtime
-        self._queue: asyncio.PriorityQueue = (
-            asyncio.PriorityQueue()
-        )
+
+        self._queue: asyncio.PriorityQueue[
+            tuple[
+                int,
+                int,
+                int,
+                str | None,
+                asyncio.Future[None] | None,
+            ]
+        ] = asyncio.PriorityQueue()
+
         self._counter = itertools.count()
-        self._worker: asyncio.Task | None = None
+        self._worker_task: asyncio.Task[None] | None = None
+
         self._closed = False
+
+        # После каждого interrupt поколение увеличивается.
+        # Элементы старых поколений больше не воспроизводятся.
         self._generation = 0
 
+        # Future текущего воспроизводимого сообщения.
+        self._current_future: asyncio.Future[None] | None = None
+        self._current_generation: int | None = None
+
+        # Защищает start/close от одновременного исполнения.
+        self._lifecycle_lock = asyncio.Lock()
+
+    @property
+    def is_running(self) -> bool:
+        return (
+            self._worker_task is not None
+            and not self._worker_task.done()
+        )
+
+    @property
+    def queued_messages(self) -> int:
+        return self._queue.qsize()
+
     async def start(self) -> None:
-        if self._worker is None:
-            self._worker = asyncio.create_task(
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError(
+                    "SpeechService уже закрыт."
+                )
+
+            if self.is_running:
+                return
+
+            self._worker_task = asyncio.create_task(
                 self._run(),
                 name="nova-speech-worker",
             )
+
+            logger.info("TTS worker запущен.")
 
     async def say(
         self,
@@ -202,16 +336,37 @@ class SpeechService:
         priority: int = 10,
         wait: bool = True,
     ) -> None:
+        """
+        Добавляет сообщение в очередь.
+
+        wait=True:
+            метод ожидает завершения или штатного прерывания речи.
+
+        Прерывание пользователем не выбрасывает CancelledError наружу.
+        Отмена родительской задачи при shutdown по-прежнему работает.
+        """
         if self._closed:
+            logger.debug(
+                "Речь проигнорирована: SpeechService закрыт."
+            )
             return
+
+        if not self.is_running:
+            await self.start()
 
         speech_text = prepare_text_for_speech(text)
 
         if not speech_text:
+            logger.debug(
+                "После подготовки не осталось текста для TTS."
+            )
             return
 
         loop = asyncio.get_running_loop()
-        completed = loop.create_future()
+        completed: asyncio.Future[None] = (
+            loop.create_future()
+        )
+
         generation = self._generation
 
         await self._queue.put(
@@ -224,22 +379,66 @@ class SpeechService:
             )
         )
 
-        if wait:
-            try:
-                await completed
-            except asyncio.CancelledError:
+        if not wait:
+            return
+
+        try:
+            await completed
+
+        except asyncio.CancelledError:
+            # Если завершается всё приложение, отмена должна пройти
+            # дальше и позволить корректно остановить voice_task.
+            if self.runtime.is_shutting_down:
                 raise
-            except Exception:
-                logger.exception(
-                    "Не удалось озвучить сообщение."
-                )
+
+            # Пользовательское прерывание TTS — штатная операция.
+            logger.info(
+                "Ожидание речи завершено после прерывания."
+            )
+            return
+
+        except Exception:
+            logger.exception(
+                "Не удалось озвучить сообщение."
+            )
 
     async def interrupt(self) -> None:
+        """
+        Немедленно прерывает текущую речь и очищает очередь.
+
+        Не отменяет voice loop и не завершает приложение.
+        """
+        if self._closed:
+            return
+
         self._generation += 1
 
-        await asyncio.to_thread(stop_speaking)
+        logger.info(
+            "Прерывание TTS. Новое поколение очереди: %s.",
+            self._generation,
+        )
 
-        while not self._queue.empty():
+        # Сначала разблокируем корутину, которая ожидает текущую речь.
+        current_future = self._current_future
+
+        if (
+            current_future is not None
+            and not current_future.done()
+        ):
+            current_future.set_result(None)
+
+        # Останавливаем sounddevice/Silero в рабочем потоке.
+        try:
+            await asyncio.to_thread(
+                stop_speaking
+            )
+        except Exception:
+            logger.exception(
+                "Ошибка во время остановки TTS."
+            )
+
+        # Очищаем еще не начатые сообщения.
+        while True:
             try:
                 (
                     _priority,
@@ -249,25 +448,88 @@ class SpeechService:
                     future,
                 ) = self._queue.get_nowait()
 
-                if future and not future.done():
-                    future.cancel()
-
-                self._queue.task_done()
-
             except asyncio.QueueEmpty:
                 break
 
+            try:
+                if (
+                    future is not None
+                    and not future.done()
+                ):
+                    # Не cancel(): ожидание речи должно завершиться
+                    # штатно, не отменяя родительскую задачу.
+                    future.set_result(None)
+            finally:
+                self._queue.task_done()
+
+        # Глобальное состояние определяет RuntimeState, а не TTS.
+        if not self.runtime.is_shutting_down:
+            next_state = (
+                AssistantState.LISTENING
+                if self.runtime.is_active
+                else AssistantState.SLEEPING
+            )
+
+            await self.runtime.set_state(next_state)
+
     async def close(self) -> None:
-        if self._closed:
-            return
+        async with self._lifecycle_lock:
+            if self._closed:
+                return
 
-        self._closed = True
-        await self.interrupt()
+            logger.info("Закрытие SpeechService.")
+            self._closed = True
+            self._generation += 1
 
-        if self._worker is not None:
+            current_future = self._current_future
+
+            if (
+                current_future is not None
+                and not current_future.done()
+            ):
+                current_future.set_result(None)
+
+            try:
+                await asyncio.to_thread(
+                    stop_speaking
+                )
+            except Exception:
+                logger.exception(
+                    "Ошибка остановки TTS при закрытии."
+                )
+
+            # Завершаем ожидающие сообщения.
+            while True:
+                try:
+                    (
+                        _priority,
+                        _counter,
+                        _generation,
+                        _text,
+                        future,
+                    ) = self._queue.get_nowait()
+
+                except asyncio.QueueEmpty:
+                    break
+
+                try:
+                    if (
+                        future is not None
+                        and not future.done()
+                    ):
+                        future.set_result(None)
+                finally:
+                    self._queue.task_done()
+
+            worker_task = self._worker_task
+
+            if worker_task is None:
+                return
+
+            # Sentinel с максимальным приоритетом.
             await self._queue.put(
                 (
-                    -100,
+                    -1_000_000,
                     next(self._counter),
                     self._generation,
                     None,
@@ -275,73 +537,142 @@ class SpeechService:
                 )
             )
 
-            await asyncio.gather(
-                self._worker,
-                return_exceptions=True,
-            )
+            try:
+                await asyncio.wait_for(
+                    worker_task,
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "TTS worker не завершился вовремя. "
+                    "Выполняется принудительная отмена."
+                )
+                worker_task.cancel()
 
-            self._worker = None
+                await asyncio.gather(
+                    worker_task,
+                    return_exceptions=True,
+                )
+            finally:
+                self._worker_task = None
+
+            logger.info("SpeechService закрыт.")
 
     async def _run(self) -> None:
-        while True:
-            (
-                _priority,
-                _counter,
-                generation,
-                text,
-                completed,
-            ) = await self._queue.get()
+        logger.debug("Цикл TTS worker начал работу.")
 
-            try:
-                if text is None:
-                    return
+        try:
+            while True:
+                (
+                    _priority,
+                    _counter,
+                    generation,
+                    text,
+                    completed,
+                ) = await self._queue.get()
 
-                if generation != self._generation:
-                    if completed and not completed.done():
-                        completed.cancel()
-                    continue
+                self._current_future = completed
+                self._current_generation = generation
 
-                reset_interrupt_flag()
+                try:
+                    # Sentinel.
+                    if text is None:
+                        return
 
-                await self.runtime.set_state(
-                    AssistantState.SPEAKING
-                )
-
-                chunks = split_speech_chunks(text)
-
-                for chunk in chunks:
+                    # Сообщение было поставлено до interrupt.
                     if generation != self._generation:
-                        break
+                        if (
+                            completed is not None
+                            and not completed.done()
+                        ):
+                            completed.set_result(None)
 
-                    await asyncio.to_thread(
-                        speak,
-                        chunk,
-                    )
+                        continue
 
-                if completed and not completed.done():
-                    if generation == self._generation:
-                        completed.set_result(None)
-                    else:
-                        completed.cancel()
-
-            except Exception as exc:
-                logger.exception(
-                    "Ошибка синтеза речи."
-                )
-
-                if completed and not completed.done():
-                    completed.set_exception(exc)
-
-            finally:
-                self._queue.task_done()
-
-                if not self.runtime.is_shutting_down:
-                    next_state = (
-                        AssistantState.LISTENING
-                        if self.runtime.is_active
-                        else AssistantState.SLEEPING
-                    )
+                    reset_interrupt_flag()
 
                     await self.runtime.set_state(
-                        next_state
+                        AssistantState.SPEAKING
                     )
+
+                    chunks = split_speech_chunks(text)
+
+                    logger.debug(
+                        "TTS сообщение разделено на %s фрагментов.",
+                        len(chunks),
+                    )
+
+                    for chunk in chunks:
+                        # Проверяем поколение до каждого фрагмента.
+                        if generation != self._generation:
+                            logger.debug(
+                                "TTS остановлен между фрагментами."
+                            )
+                            break
+
+                        await asyncio.to_thread(
+                            speak,
+                            chunk,
+                        )
+
+                    if (
+                        completed is not None
+                        and not completed.done()
+                    ):
+                        completed.set_result(None)
+
+                except asyncio.CancelledError:
+                    if (
+                        completed is not None
+                        and not completed.done()
+                    ):
+                        completed.set_result(None)
+
+                    raise
+
+                except Exception as exc:
+                    logger.exception(
+                        "Ошибка TTS worker."
+                    )
+
+                    if (
+                        completed is not None
+                        and not completed.done()
+                    ):
+                        completed.set_exception(exc)
+
+                finally:
+                    self._current_future = None
+                    self._current_generation = None
+                    self._queue.task_done()
+
+                    if not self.runtime.is_shutting_down:
+                        next_state = (
+                            AssistantState.LISTENING
+                            if self.runtime.is_active
+                            else AssistantState.SLEEPING
+                        )
+
+                        await self.runtime.set_state(
+                            next_state
+                        )
+
+        except asyncio.CancelledError:
+            logger.info("TTS worker отменен.")
+            raise
+
+        finally:
+            # Любой оставшийся текущий Future должен завершиться,
+            # чтобы другие части приложения не зависли.
+            current_future = self._current_future
+
+            if (
+                current_future is not None
+                and not current_future.done()
+            ):
+                current_future.set_result(None)
+
+            self._current_future = None
+            self._current_generation = None
+
+            logger.debug("Цикл TTS worker завершен.")
