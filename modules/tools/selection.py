@@ -114,6 +114,35 @@ def select_tool_names(
         "rollback",
         "восстанови файл",
     )
+    git_markers = (
+        "git",
+        "коммит",
+        "commit",
+        "ветк",
+        "branch",
+        "статус репозитория",
+        "история коммитов",
+        "пулл",
+        "pull",
+        "пуш",
+        "push",
+    )
+
+    project_markers = (
+        "проект",
+        "инспектир",
+        "inspect",
+        "структура проекта",
+        "тип проекта",
+        "docker",
+        "докер",
+    )
+
+    if contains_any(text, git_markers):
+        selected |= GIT_TOOLS
+
+    if contains_any(text, project_markers):
+        selected |= PROJECT_TOOLS
 
     if contains_any(text, filesystem_markers):
         selected |= FILESYSTEM_TOOLS
@@ -313,4 +342,16 @@ FILESYSTEM_TOOLS = {
     "get_file_diff",
     "search_files",
     "rollback_file",
+}
+
+GIT_TOOLS = {
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_commit",
+    "git_branch",
+}
+
+PROJECT_TOOLS = {
+    "inspect_project",
 }

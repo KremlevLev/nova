@@ -3,6 +3,16 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from modules.windows.git_tools import (
+    git_status,
+    git_diff,
+    git_log,
+    git_commit,
+    git_branch,
+)
+from modules.windows.project_inspector import (
+    inspect_project,
+)
 from modules.windows.filesystem import (
     read_text_file,
     write_text_file,
@@ -254,6 +264,12 @@ def build_handlers(
         "get_file_diff": get_file_diff,
         "search_files": search_files,
         "rollback_file": rollback_file,
+        "git_status": git_status,
+        "git_diff": git_diff,
+        "git_log": git_log,
+        "git_commit": git_commit,
+        "git_branch": git_branch,
+        "inspect_project": inspect_project,
 
     }
 

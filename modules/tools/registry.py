@@ -717,3 +717,139 @@ filesystem_tools = [
 ]
 
 ALL_TOOLS.extend(filesystem_tools)
+
+git_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "git_status",
+            "description": (
+                "Проверяет статус Git-репозитория."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                    },
+                },
+                "required": ["repo_path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_diff",
+            "description": (
+                "Показывает изменения в Git-репозитории."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                    },
+                    "staged": {
+                        "type": "boolean",
+                    },
+                },
+                "required": ["repo_path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_log",
+            "description": (
+                "Показывает историю коммитов."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                    },
+                    "max_count": {
+                        "type": "integer",
+                    },
+                },
+                "required": ["repo_path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_commit",
+            "description": (
+                "Создаёт коммит в Git-репозитории."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                    },
+                    "message": {
+                        "type": "string",
+                    },
+                    "add_all": {
+                        "type": "boolean",
+                    },
+                },
+                "required": [
+                    "repo_path",
+                    "message",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_branch",
+            "description": (
+                "Показывает список веток Git."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                    },
+                },
+                "required": ["repo_path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_project",
+            "description": (
+                "Анализирует структуру проекта: "
+                "определяет язык, фреймворки, "
+                "наличие Docker, Git и CI."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_path": {
+                        "type": "string",
+                    },
+                },
+                "required": ["project_path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(git_tools)
