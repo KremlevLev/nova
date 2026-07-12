@@ -3,8 +3,6 @@
 
 ![Python 3.14](https://img.shields.io/badge/Python-3.14-blue) ![Local & Cloud LLM](https://img.shields.io/badge/LLM-Local%20%7C%20Cloud-success) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
 
-# Nova: Локальный ИИ-ассистент для Windows
-
 Nova — это компактный и оптимизированный под работу на процессоре (CPU) голосовой ассистент, который управляет операционной системой Windows, ставит напоминания, сохраняет заметки и ищет информацию в сети.
 
 ---
