@@ -141,7 +141,7 @@ def build_handlers(
         focus_window=focus_window,
         press_hotkey=press_keyboard_combination,
         type_text=type_text,
-        get_active_window_title=get_active_window_title
+        get_active_window_title=get_active_window_title,
     )
     def start_process_handler(
         command: list[str],
@@ -481,6 +481,7 @@ async def async_main() -> None:
     memory,
     scheduler,
     app_launcher,
+    process_manager
 )
 
     registry = ToolRegistry.from_legacy(
