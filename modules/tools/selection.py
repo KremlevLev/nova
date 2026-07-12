@@ -139,6 +139,15 @@ def select_tool_names(
         "пуш",
         "push",
     )
+    artifact_markers = (
+        "артефакт",
+        "сохрани результат",
+        "сохрани лог",
+        "прочитай артефакт",
+    )
+
+    if contains_any(text, artifact_markers):
+        selected |= ARTIFACT_TOOLS
 
     project_markers = (
         "проект",
@@ -373,4 +382,9 @@ MEMORY_STORE_TOOLS = {
     "search_memory",
     "delete_memory",
     "clear_all_memories",
+}
+ARTIFACT_TOOLS = {
+    "store_artifact",
+    "read_artifact",
+    "delete_artifact",
 }

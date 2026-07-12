@@ -938,3 +938,70 @@ memory_store_tools = [
 ]
 
 ALL_TOOLS.extend(memory_store_tools)
+
+artifact_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "store_artifact",
+            "description": (
+                "Сохраняет большой текст как артефакт "
+                "и возвращает его идентификатор."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                    },
+                    "artifact_type": {
+                        "type": "string",
+                    },
+                },
+                "required": ["content"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_artifact",
+            "description": (
+                "Читает содержимое артефакта "
+                "по его идентификатору."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "artifact_id": {
+                        "type": "string",
+                    },
+                },
+                "required": ["artifact_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_artifact",
+            "description": (
+                "Удаляет артефакт по идентификатору."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "artifact_id": {
+                        "type": "string",
+                    },
+                },
+                "required": ["artifact_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(artifact_tools)

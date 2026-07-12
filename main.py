@@ -3,6 +3,9 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from modules.storage.artifacts import (
+    ArtifactStore,
+)
 from modules.storage.database import Database
 from modules.storage.conversations import (
     ConversationStore,
@@ -102,6 +105,7 @@ conversation_store = ConversationStore(
     database
 )
 memory_store = MemoryStore(database)
+artifact_store = ArtifactStore()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -164,6 +168,26 @@ def build_handlers(
         type_text=type_text,
         get_active_window_title=get_active_window_title,
     )
+    def store_artifact_handler(
+        content: str,
+        artifact_type: str = "text",
+    ) -> ToolResult:
+        return artifact_store.store(
+            content,
+            artifact_type=artifact_type,
+        )
+
+
+    def read_artifact_handler(
+        artifact_id: str,
+    ) -> ToolResult:
+        return artifact_store.read(artifact_id)
+
+
+    def delete_artifact_handler(
+        artifact_id: str,
+    ) -> ToolResult:
+        return artifact_store.delete(artifact_id)
 
     def save_memory_handler(
         key: str,
@@ -327,6 +351,10 @@ def build_handlers(
         "clear_all_memories": (
             clear_all_memories_handler
         ),
+                "store_artifact": store_artifact_handler,
+        "read_artifact": read_artifact_handler,
+        "delete_artifact": delete_artifact_handler,
+
     }
 
 
