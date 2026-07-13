@@ -273,9 +273,14 @@ def test_critical_failure_stops_plan() -> None:
         assert not result.success
         assert result.failed_steps == 1
         assert (
-            "plan.steps<span class=\"footnote-wrapper\">(0)</span>.status"
-            == PlanStepStatus.FAILED
-        )
+    plan.steps[0].status
+    == PlanStepStatus.FAILED
+)
+        assert (
+    plan.steps[1].status
+    == PlanStepStatus.SKIPPED
+)
+
 
     asyncio.run(scenario())
 

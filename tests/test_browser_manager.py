@@ -77,6 +77,71 @@ def test_javascript_scheme_is_blocked() -> None:
     assert not valid
     assert error is not None
 
+def test_data_scheme_is_blocked() -> None:
+    valid, _, error = validate_browser_url(
+        "data:text/html,<h1>test</h1>"
+    )
+
+    assert not valid
+    assert error is not None
+
+
+def test_file_scheme_is_blocked_without_slashes() -> None:
+    valid, _, error = validate_browser_url(
+        "file:C:/Windows/system.ini"
+    )
+
+    assert not valid
+    assert error is not None
+
+
+def test_ftp_scheme_is_blocked() -> None:
+    valid, _, error = validate_browser_url(
+        "ftp://example.com/file.txt"
+    )
+
+    assert not valid
+    assert error is not None
+
+
+def test_local_subdomain_is_blocked() -> None:
+    valid, _, error = validate_browser_url(
+        "http://service.local"
+    )
+
+    assert not valid
+    assert error is not None
+
+
+def test_url_credentials_are_blocked() -> None:
+    valid, _, error = validate_browser_url(
+        "https://user:password@example.com"
+    )
+
+    assert not valid
+    assert error is not None
+
+
+def test_protocol_relative_public_url_is_allowed() -> None:
+    valid, normalized, error = (
+        validate_browser_url(
+            "//example.com/page"
+        )
+    )
+
+    assert valid
+    assert normalized == "https://example.com/page"
+    assert error is None
+
+
+def test_invalid_port_is_blocked() -> None:
+    valid, _, error = validate_browser_url(
+        "https://example.com:99999"
+    )
+
+    assert not valid
+    assert error is not None
+
 
 def test_valid_selector() -> None:
     valid, error = validate_selector(
