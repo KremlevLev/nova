@@ -291,6 +291,17 @@ def select_tool_names(
         "фоновый процесс",
         "процесс",
     )
+    background_plan_markers = (
+        "в фоне",
+        "фоновая задача",
+        "фоновый план",
+        "не жди завершения",
+        "продолжай в фоне",
+        "поставь задачу",
+        "запусти план",
+        "статус фоновой задачи",
+        "отмени фоновую задачу",
+    )
 
     note_markers = (
         "быструю заметку",
@@ -392,6 +403,12 @@ def select_tool_names(
 
     if contains_any(text, note_markers):
         selected |= NOTE_TOOLS
+    if contains_any(
+        text,
+        background_plan_markers,
+    ):
+        selected |= BACKGROUND_PLAN_TOOLS
+        selected |= PLANNING_TOOLS
 
     if contains_any(text, provider_markers):
         selected |= MODEL_DIAGNOSTIC_TOOLS

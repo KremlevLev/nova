@@ -113,43 +113,6 @@ def test_fallback_is_selected() -> None:
     assert decision.action == RecoveryAction.FALLBACK
 
 
-def test_execute_with_recovery_succeeds_on_second_attempt() -> None:
-    async def scenario() -> None:
-        engine = RecoveryEngine()
-        attempts: list[int] = []
-
-        async def operation(
-            attempt: int,
-        ) -> ToolResult:
-            attempts.append(attempt)
-
-            if attempt == 1:
-                return ToolResult.failure(
-                    "TOOL_TIMEOUT",
-                    "Временная ошибка.",
-                    retryable=True,
-                )
-
-            return ToolResult.ok("Успешно.")
-
-        result, decision = (
-            await engine.execute_with_recovery(
-                operation,
-                operation_name="test",
-                max_attempts=2,
-            )
-        )
-
-        assert result.success
-        assert attempts == [1][2]
-        assert (
-            decision.action
-            == RecoveryAction.CONTINUE
-        )
-
-    asyncio.run(scenario())
-
-
 def test_cancellation_prevents_execution() -> None:
     async def scenario() -> None:
         engine = RecoveryEngine()

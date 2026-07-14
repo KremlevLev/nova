@@ -300,52 +300,90 @@ class BackgroundPlanManager:
         self,
         background_id: str,
     ) -> ToolResult:
+        """
+        Отменяет активный фоновый план.
+
+        Статус устанавливается явно после ожидания task, потому что
+        asyncio-задача может быть отменена ещё до запуска _run_plan().
+        В таком случае её внутренний обработчик CancelledError не
+        успевает изменить состояние.
+        """
         async with self._lock:
             record = self._plans.get(
                 background_id
             )
 
-        if record is None:
-            return ToolResult.failure(
-                "BACKGROUND_PLAN_NOT_FOUND",
-                (
-                    f"Фоновый план '{background_id}' "
-                    "не найден."
-                ),
+            if record is None:
+                return ToolResult.failure(
+                    "BACKGROUND_PLAN_NOT_FOUND",
+                    (
+                        f"Фоновый план '{background_id}' "
+                        "не найден."
+                    ),
+                )
+
+            if record.status in {
+                BackgroundPlanStatus.COMPLETED,
+                BackgroundPlanStatus.FAILED,
+                BackgroundPlanStatus.CANCELLED,
+            }:
+                return ToolResult.ok(
+                    (
+                        "Фоновый план уже завершён. "
+                        f"Статус: {record.status.value}."
+                    ),
+                    data=record.to_dict(),
+                )
+
+            record.status = (
+                BackgroundPlanStatus.CANCELLING
             )
+            task = record.task
 
-        if record.status in {
-            BackgroundPlanStatus.COMPLETED,
-            BackgroundPlanStatus.FAILED,
-            BackgroundPlanStatus.CANCELLED,
-        }:
-            return ToolResult.ok(
-                (
-                    "Фоновый план уже завершён. "
-                    f"Статус: {record.status.value}."
-                ),
-                data=record.to_dict(),
-            )
-
-        record.status = (
-            BackgroundPlanStatus.CANCELLING
-        )
-
-        if (
-            record.task is not None
-            and not record.task.done()
-        ):
-            record.task.cancel()
+        # Task отменяется за пределами lock, чтобы _run_plan()
+        # мог безопасно обновить собственное состояние.
+        if task is not None and not task.done():
+            task.cancel()
 
             await asyncio.gather(
-                record.task,
+                task,
                 return_exceptions=True,
             )
 
+        # Если задача была отменена до фактического запуска
+        # _run_plan(), её except/finally не исполнятся.
+        # Поэтому гарантированно завершаем переход состояния здесь.
+        async with self._lock:
+            if record.status in {
+                BackgroundPlanStatus.QUEUED,
+                BackgroundPlanStatus.RUNNING,
+                BackgroundPlanStatus.CANCELLING,
+            }:
+                record.status = (
+                    BackgroundPlanStatus.CANCELLED
+                )
+
+            if record.finished_at is None:
+                record.finished_at = time.time()
+
+            if record.result is None:
+                record.result = ToolResult.failure(
+                    "BACKGROUND_PLAN_CANCELLED",
+                    "Фоновый план отменён.",
+                )
+
+            result_data = record.to_dict()
+
+        logger.info(
+            "Фоновый план отменён: %s",
+            background_id,
+        )
+
         return ToolResult.ok(
             f"Фоновый план '{background_id}' отменён.",
-            data=record.to_dict(),
+            data=result_data,
         )
+
 
     async def close(self) -> None:
         self._closed = True

@@ -20,11 +20,6 @@ from modules.storage.conversations import (
     ConversationStore,
 )
 from modules.storage.memories import MemoryStore
-from modules.tools.registry import (
-    ALL_TOOLS,
-    planning_tools,
-)
-
 from modules.windows.git_tools import (
     git_status,
     git_diff,
@@ -636,34 +631,112 @@ async def async_main() -> None:
         browser_manager,
     )
 
-    planning_tool_names = {
-        tool["function"]["name"]
-        for tool in planning_tools
-    }
+    # ---------------------------------------------------------
+    # СОЗДАНИЕ TOOL REGISTRY И ОТЛОЖЕННАЯ РЕГИСТРАЦИЯ ПЛАНОВ
+    # ---------------------------------------------------------
 
-    deferred_tool_names = {
-    tool["function"]["name"]
-    for tool in (
+    # Инструменты планирования нельзя зарегистрировать сразу:
+    # PlanService зависит от уже созданных registry и runner.
+    deferred_tool_schemas = (
         planning_tools
         + background_plan_tools
     )
-}
 
+    deferred_tool_names = {
+        tool_schema["function"]["name"]
+        for tool_schema in deferred_tool_schemas
+    }
+
+    # Первоначально создаём registry без инструментов планирования.
     base_tool_schemas = [
-    tool
-    for tool in ALL_TOOLS
-    if tool["function"]["name"]
-    not in deferred_tool_names
-]
-    for schema in background_plan_tools:
-        tool_name = schema["function"]["name"]
+        tool_schema
+        for tool_schema in ALL_TOOLS
+        if (
+            tool_schema["function"]["name"]
+            not in deferred_tool_names
+        )
+    ]
+
+    registry = ToolRegistry.from_legacy(
+        base_tool_schemas,
+        handlers,
+    )
+
+    runner = ToolRunner(registry)
+
+    # PlanService использует готовые registry и runner.
+    plan_service = PlanService(
+        registry=registry,
+        runner=runner,
+    )
+
+    # Менеджер фоновых планов использует PlanService.
+    background_plan_manager = (
+        BackgroundPlanManager(
+            plan_service
+        )
+    )
+
+    planning_handlers = {
+        "execute_plan": (
+            plan_service.execute_plan
+        ),
+        "get_plan_status": (
+            plan_service.get_plan_status
+        ),
+        "cancel_plan": (
+            plan_service.cancel_plan
+        ),
+    }
+
+    background_plan_handlers = {
+        "start_background_plan": (
+            background_plan_manager.start_plan
+        ),
+        "get_background_plan_status": (
+            background_plan_manager.get_status
+        ),
+        "list_background_plans": (
+            background_plan_manager.list_plans
+        ),
+        "cancel_background_plan": (
+            background_plan_manager.cancel_plan
+        ),
+    }
+
+    # Теперь регистрируем обычные инструменты планирования.
+    for tool_schema in planning_tools:
+        tool_name = (
+            tool_schema["function"]["name"]
+        )
 
         registry.register(
-        schema=schema,
-        handler=background_plan_handlers[
-            tool_name
-        ],
+            schema=tool_schema,
+            handler=planning_handlers[
+                tool_name
+            ],
+        )
+
+    # Затем регистрируем инструменты фоновых планов.
+    for tool_schema in background_plan_tools:
+        tool_name = (
+            tool_schema["function"]["name"]
+        )
+
+        registry.register(
+            schema=tool_schema,
+            handler=background_plan_handlers[
+                tool_name
+            ],
+        )
+
+    # AgentService получает полностью собранный registry.
+    agent = AgentService(
+        llm,
+        registry,
+        runner,
     )
+
 
 
     registry = ToolRegistry.from_legacy(
@@ -825,11 +898,18 @@ async def async_main() -> None:
         )
 
         keyboard.unhook_all_hotkeys()
+
         await speech.close()
+        await background_plan_manager.close()
+        await browser_manager.close()
         await llm.close()
+
+        process_manager.cleanup_all()
+        database.close()
 
         stop_overlay()
         instance_lock.close()
+
 
 
 if __name__ == "__main__":
