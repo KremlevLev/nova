@@ -14,6 +14,17 @@ from modules.ui.desktop_protocol import (
 from modules.ui.desktop_service import (
     DesktopService,
 )
+from modules.application.preferences import (
+    PreferencesManager,
+)
+from modules.input_hub.coordinator import (
+    InputCoordinator,
+)
+from modules.input_hub.models import (
+    AssistantProfile,
+    ModelSelectionMode,
+    RequestSource,
+)
 
 
 logger = logging.getLogger("CoreDesktopBridge")
@@ -33,15 +44,33 @@ class CoreDesktopBridge:
         permission_manager: PermissionManager,
         llm,
         runtime,
+        input_coordinator: (
+            InputCoordinator | None
+        ) = None,
+        preferences: (
+            PreferencesManager | None
+        ) = None,
+        cancel_current_request=None,
     ) -> None:
         self.desktop = desktop
-        self.process_manager = process_manager
+        self.process_manager = (
+            process_manager
+        )
         self.memory_store = memory_store
         self.permission_manager = (
             permission_manager
         )
         self.llm = llm
         self.runtime = runtime
+
+        self.input_coordinator = (
+            input_coordinator
+        )
+        self.preferences = preferences
+        self.cancel_current_request = (
+            cancel_current_request
+        )
+
 
     async def run(
         self,
@@ -86,6 +115,14 @@ class CoreDesktopBridge:
             if process_result.success
             else []
         )
+        if self.preferences is not None:
+            self.desktop.publish(
+                "preferences",
+                self.preferences
+                .snapshot()
+                .to_dict(),
+            )
+
 
         memory_data = await asyncio.to_thread(
             self.memory_store.search,
@@ -285,6 +322,133 @@ class CoreDesktopBridge:
                         if success
                         else
                         "Запрос разрешения не найден."
+                    ),
+                )
+                return
+            if action == "submit_user_request":
+                if (
+                    self.input_coordinator
+                    is None
+                ):
+                    self._publish_command_result(
+                        command_id,
+                        success=False,
+                        message=(
+                            "InputCoordinator "
+                            "не подключён."
+                        ),
+                    )
+                    return
+
+                text = str(
+                    payload.get(
+                        "text",
+                        "",
+                    )
+                ).strip()
+
+                if not text:
+                    self._publish_command_result(
+                        command_id,
+                        success=False,
+                        message=(
+                            "Текст запроса пуст."
+                        ),
+                    )
+                    return
+
+                profile_raw = str(
+                    payload.get(
+                        "profile",
+                        AssistantProfile.ASSISTANT.value,
+                    )
+                )
+
+                model_mode_raw = str(
+                    payload.get(
+                        "model_mode",
+                        ModelSelectionMode.AUTO.value,
+                    )
+                )
+
+                try:
+                    profile = AssistantProfile(
+                        profile_raw
+                    )
+                except ValueError:
+                    profile = (
+                        AssistantProfile.ASSISTANT
+                    )
+
+                try:
+                    model_mode = (
+                        ModelSelectionMode(
+                            model_mode_raw
+                        )
+                    )
+                except ValueError:
+                    model_mode = (
+                        ModelSelectionMode.AUTO
+                    )
+
+                request = (
+                    await self.input_coordinator
+                    .submit_text(
+                        text,
+                        source=(
+                            RequestSource.DESKTOP_CHAT
+                        ),
+                        profile=profile,
+                        model_mode=model_mode,
+                        selected_model=(
+                            payload.get(
+                                "selected_model"
+                            )
+                        ),
+                    )
+                )
+
+                self._publish_command_result(
+                    command_id,
+                    success=(
+                        request is not None
+                    ),
+                    message=(
+                        "Запрос отправлен."
+                        if request is not None
+                        else
+                        "Не удалось отправить запрос."
+                    ),
+                )
+                return
+
+            if action == "cancel_current_request":
+                if (
+                    self.cancel_current_request
+                    is None
+                ):
+                    self._publish_command_result(
+                        command_id,
+                        success=False,
+                        message=(
+                            "Отмена текущего запроса "
+                            "не подключена."
+                        ),
+                    )
+                    return
+
+                cancelled = (
+                    await self.cancel_current_request()
+                )
+
+                self._publish_command_result(
+                    command_id,
+                    success=cancelled,
+                    message=(
+                        "Текущий запрос отменён."
+                        if cancelled
+                        else
+                        "Активного запроса нет."
                     ),
                 )
                 return

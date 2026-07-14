@@ -9,7 +9,10 @@ from typing import Any
 from modules.ui.desktop_protocol import (
     make_command,
 )
-
+from PySide6.QtWidgets import (
+            QComboBox,
+            QLineEdit,
+)
 
 def run_desktop(
     *,
@@ -72,12 +75,242 @@ def run_desktop(
             self.timer.start(100)
 
             self._send_command("refresh")
+        def _create_chat_tab(
+            self,
+        ) -> QWidget:
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+
+            self.chat_history = QTextEdit()
+            self.chat_history.setReadOnly(True)
+            self.chat_history.setPlaceholderText(
+                "Диалог с Nova..."
+            )
+
+            controls = QHBoxLayout()
+
+            self.profile_combo = QComboBox()
+            self.profile_combo.addItem(
+                "Помощник",
+                "assistant",
+            )
+            self.profile_combo.addItem(
+                "Безопасный",
+                "safe",
+            )
+            self.profile_combo.addItem(
+                "Инженер",
+                "engineer",
+            )
+            self.profile_combo.addItem(
+                "Автономная задача",
+                "autonomous_task",
+            )
+            self.profile_combo.addItem(
+                "Приватный локальный",
+                "private_local",
+            )
+
+            self.model_mode_combo = QComboBox()
+            self.model_mode_combo.addItem(
+                "Модель: Авто",
+                "auto",
+            )
+            self.model_mode_combo.addItem(
+                "Модель: Быстрая",
+                "fast",
+            )
+            self.model_mode_combo.addItem(
+                "Модель: Умная",
+                "smart",
+            )
+            self.model_mode_combo.addItem(
+                "Модель: Код",
+                "coding",
+            )
+            self.model_mode_combo.addItem(
+                "Только бесплатные",
+                "free_only",
+            )
+            self.model_mode_combo.addItem(
+                "Только локальная",
+                "local_only",
+            )
+
+            controls.addWidget(
+                self.profile_combo
+            )
+            controls.addWidget(
+                self.model_mode_combo
+            )
+            controls.addStretch()
+
+            input_layout = QHBoxLayout()
+
+            self.chat_input = QLineEdit()
+            self.chat_input.setPlaceholderText(
+                "Введите команду Nova..."
+            )
+            self.chat_input.returnPressed.connect(
+                self._submit_chat_request
+            )
+
+            send_button = QPushButton(
+                "Отправить"
+            )
+            send_button.clicked.connect(
+                self._submit_chat_request
+            )
+
+            cancel_button = QPushButton(
+                "Отмена"
+            )
+            cancel_button.clicked.connect(
+                lambda: self._send_command(
+                    "cancel_current_request"
+                )
+            )
+
+            input_layout.addWidget(
+                self.chat_input
+            )
+            input_layout.addWidget(
+                send_button
+            )
+            input_layout.addWidget(
+                cancel_button
+            )
+
+            layout.addWidget(
+                self.chat_history
+            )
+            layout.addLayout(controls)
+            layout.addLayout(input_layout)
+
+            return widget
+
+        def _submit_chat_request(
+            self,
+        ) -> None:
+            text = self.chat_input.text().strip()
+
+            if not text:
+                return
+
+            profile = (
+                self.profile_combo.currentData()
+                or "assistant"
+            )
+
+            model_mode = (
+                self.model_mode_combo.currentData()
+                or "auto"
+            )
+
+            self._append_chat_message(
+                "Вы",
+                text,
+            )
+
+            self._send_command(
+                "submit_user_request",
+                {
+                    "text": text,
+                    "profile": profile,
+                    "model_mode": (
+                        model_mode
+                    ),
+                },
+            )
+
+            self.chat_input.clear()
+
+        def _append_chat_message(
+            self,
+            author: str,
+            text: str,
+        ) -> None:
+            if not text.strip():
+                return
+
+            safe_author = (
+                str(author)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+
+            safe_text = (
+                str(text)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br>")
+            )
+
+            color = (
+                "#66d9ff"
+                if author == "Nova"
+                else "#7dff9a"
+            )
+
+            self.chat_history.append(
+                (
+                    f"<p><b style='color:{color}'>"
+                    f"{safe_author}:</b><br>"
+                    f"{safe_text}</p>"
+                )
+            )
+
+        def _update_preferences(
+            self,
+            payload: dict[str, Any],
+        ) -> None:
+            profile_value = str(
+                payload.get(
+                    "assistant_profile",
+                    "assistant",
+                )
+            )
+
+            model_mode_value = str(
+                payload.get(
+                    "model_mode",
+                    "auto",
+                )
+            )
+
+            profile_index = (
+                self.profile_combo.findData(
+                    profile_value
+                )
+            )
+
+            if profile_index >= 0:
+                self.profile_combo.setCurrentIndex(
+                    profile_index
+                )
+
+            model_index = (
+                self.model_mode_combo.findData(
+                    model_mode_value
+                )
+            )
+
+            if model_index >= 0:
+                self.model_mode_combo.setCurrentIndex(
+                    model_index
+                )
 
         def _build_ui(self) -> None:
             root = QWidget()
             root_layout = QVBoxLayout(root)
 
             header_layout = QHBoxLayout()
+            self.tabs.addTab(
+                self._create_chat_tab(),
+                "Чат",
+            )
 
             self.title_label = QLabel(
                 "NOVA CONTROL CENTER"
@@ -472,6 +705,33 @@ def run_desktop(
                             indent=2,
                         )
                     )
+                elif event_type == "user_message":
+                    self._append_chat_message(
+                        "Вы",
+                        str(
+                            payload.get(
+                                "text",
+                                "",
+                            )
+                        ),
+                    )
+
+                elif event_type == "assistant_message":
+                    self._append_chat_message(
+                        "Nova",
+                        str(
+                            payload.get(
+                                "display_text",
+                                "",
+                            )
+                        ),
+                    )
+
+                elif event_type == "preferences":
+                    self._update_preferences(
+                        payload
+                    )
+
                 elif event_type == (
                     "command_result"
                 ):
@@ -640,7 +900,7 @@ def run_desktop(
             self.permission_table.resizeColumnsToContents()
 
             if items:
-                self.tabs.setCurrentIndex(3)
+                self.tabs.setCurrentIndex(4)
 
         def _selected_row(
             self,

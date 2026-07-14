@@ -403,3 +403,21 @@ def test_routing_import() -> None:
     assert DeterministicIntentRouter is not None
     assert ExecutionDecision is not None
     assert ExecutionStrategy is not None
+def test_request_runtime_import() -> None:
+    from modules.application.preferences import (
+        PreferencesManager,
+    )
+    from modules.application.request_dispatcher import (
+        RequestDispatcher,
+    )
+    from modules.application.request_service import (
+        RequestService,
+    )
+    from modules.routing.direct_executor import (
+        DirectRequestExecutor,
+    )
+
+    assert PreferencesManager is not None
+    assert RequestDispatcher is not None
+    assert RequestService is not None
+    assert DirectRequestExecutor is not None

@@ -13,6 +13,9 @@ from modules.ui.core_bridge import (
 from modules.ui.desktop_protocol import (
     make_command,
 )
+from modules.input_hub.models import (
+    UserRequest,
+)
 
 
 class FakeDesktop:
@@ -34,6 +37,7 @@ class FakeDesktop:
 
     def get_commands(self):
         return []
+
 
 
 class FakeProcessManager:
@@ -244,5 +248,77 @@ def test_unknown_command_returns_error() -> None:
         assert not result_event[
             "payload"
         ]["success"]
+
+    asyncio.run(scenario())
+class FakeInputCoordinator:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def submit_text(
+        self,
+        text,
+        **kwargs,
+    ):
+        request = UserRequest.from_text(
+            text,
+            **{
+                key: value
+                for key, value in kwargs.items()
+                if key in {
+                    "source",
+                    "profile",
+                    "model_mode",
+                    "selected_model",
+                }
+            },
+        )
+
+        self.requests.append(request)
+        return request
+def test_submit_user_request_command() -> None:
+    async def scenario() -> None:
+        (
+            bridge,
+            desktop,
+            _,
+            _,
+        ) = create_bridge()
+
+        coordinator = (
+            FakeInputCoordinator()
+        )
+
+        bridge.input_coordinator = (
+            coordinator
+        )
+
+        command = make_command(
+            "submit_user_request",
+            {
+                "text": "Который час?",
+                "profile": "assistant",
+                "model_mode": "auto",
+            },
+        )
+
+        await bridge.handle_command(
+            command
+        )
+
+        assert len(
+            coordinator.requests
+        ) == 1
+
+        assert (
+            coordinator.requests[0].text
+            == "Который час?"
+        )
+
+        assert (
+            desktop.events[-1][
+                "event_type"
+            ]
+            == "command_result"
+        )
 
     asyncio.run(scenario())

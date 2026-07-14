@@ -3,6 +3,33 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from modules.application.preferences import (
+    PreferencesManager,
+)
+from modules.application.request_dispatcher import (
+    RequestDispatcher,
+)
+from modules.application.request_service import (
+    RequestService,
+)
+from modules.domain.results import (
+    AssistantResponse,
+)
+from modules.input_hub.coordinator import (
+    InputCoordinator,
+)
+from modules.input_hub.models import (
+    UserRequest,
+)
+from modules.routing.direct_executor import (
+    DirectRequestExecutor,
+)
+
+from modules.input_hub.models import (
+    InputMode,
+    RequestSource,
+)
+
 from core.config import NOVA_DESKTOP_UI
 
 from modules.ui.desktop_service import (
@@ -110,7 +137,6 @@ from modules.tools.os_utils import (
     run_terminal_command,
     get_active_window_title,
 )
-from modules.tools.registry import ALL_TOOLS
 from modules.tools.runtime import ToolRegistry, ToolRunner
 from modules.tools.tasks import (
     TaskScheduler,
@@ -440,7 +466,7 @@ def should_capture_active_window(text: str) -> bool:
 async def run_voice_loop(
     runtime: RuntimeState,
     speech: SpeechService,
-    agent: AgentService,
+    input_coordinator: InputCoordinator,
     listener: VoiceListener,
     app_launcher: WindowsAppIndexer,
     windows_context: WindowsContext,
@@ -583,26 +609,57 @@ async def run_voice_loop(
             )
         )
 
-        response = await agent.run(
-            resolved_request,
-            user_content=(
-                user_content
-                if user_content != user_request
-                else resolved_request
-            ),
-            use_tools=should_pass_tools(resolved_request),
-            has_image=has_image,
+        resolved_request = (
+            windows_context.resolve_reference(
+                user_request
+            )
         )
 
+        request = UserRequest.from_voice(
+            resolved_request,
+            wake_word=False,
+            session_id=None,
+            metadata={
+                "original_transcription": (
+                    user_request
+                ),
+                "has_image": has_image,
+            },
+        )
 
-        print(f"\n[Nova]: {response.display_text}\n")
-
-        try:
-            await speech.say(
-                response.speech_text,
-                priority=5,
+        if has_image and image_path:
+            from modules.input_hub.models import (
+                Attachment,
+                AttachmentType,
             )
-        except asyncio.CancelledError:
+
+            request.attachments.append(
+                Attachment(
+                    attachment_type=(
+                        AttachmentType.SCREENSHOT
+                    ),
+                    path=image_path,
+                    display_name=(
+                        "Снимок экрана"
+                    ),
+                )
+            )
+
+        submitted = (
+            await input_coordinator.submit(
+                request
+            )
+        )
+
+        if not submitted:
+            await speech.say(
+                (
+                    "Сэр, не удалось добавить "
+                    "запрос в очередь."
+                ),
+                priority=3,
+            )
+
             if runtime.is_shutting_down:
                 raise
             
@@ -683,23 +740,6 @@ async def async_main() -> None:
     )
 
     runner = ToolRunner(registry)
-    desktop_bridge = CoreDesktopBridge(
-        desktop=desktop_service,
-        process_manager=process_manager,
-        memory_store=memory_store,
-        permission_manager=(
-            runner.permission_manager
-        ),
-        llm=llm,
-        runtime=runtime,
-    )
-
-    desktop_bridge_task = asyncio.create_task(
-        desktop_bridge.run(
-            runtime.shutdown_event
-        ),
-        name="nova-desktop-bridge",
-    )
 
     # PlanService использует готовые registry и runner.
     plan_service = PlanService(
@@ -773,8 +813,27 @@ async def async_main() -> None:
         registry,
         runner,
     )
+    preferences = PreferencesManager()
 
+    input_coordinator = InputCoordinator()
 
+    direct_executor = DirectRequestExecutor(
+        runner=runner,
+        preferences=preferences,
+        session_id=agent.session_id,
+    )
+
+    request_dispatcher = RequestDispatcher(
+        agent=agent,
+        direct_executor=direct_executor,
+        intent_router=(
+            agent.intent_router
+        ),
+    )
+
+    # =========================================================
+    # TOOL PLATFORM
+    # =========================================================
 
     registry = ToolRegistry.from_legacy(
         base_tool_schemas,
@@ -783,16 +842,239 @@ async def async_main() -> None:
 
     runner = ToolRunner(registry)
 
+    # =========================================================
+    # PLAN SERVICES
+    #
+    # Они создаются после registry и runner, потому что сами
+    # используют ToolRunner для выполнения шагов.
+    # =========================================================
+
     plan_service = PlanService(
         registry=registry,
         runner=runner,
     )
-    background_plan_manager = (
-    BackgroundPlanManager(
-        plan_service
-    )
-)
 
+    background_plan_manager = (
+        BackgroundPlanManager(
+            plan_service
+        )
+    )
+
+    planning_handlers = {
+        "execute_plan": (
+            plan_service.execute_plan
+        ),
+        "get_plan_status": (
+            plan_service.get_plan_status
+        ),
+        "cancel_plan": (
+            plan_service.cancel_plan
+        ),
+    }
+
+    background_plan_handlers = {
+        "start_background_plan": (
+            background_plan_manager.start_plan
+        ),
+        "get_background_plan_status": (
+            background_plan_manager.get_status
+        ),
+        "list_background_plans": (
+            background_plan_manager.list_plans
+        ),
+        "cancel_background_plan": (
+            background_plan_manager.cancel_plan
+        ),
+    }
+
+    # Deferred tools нельзя регистрировать до создания
+    # PlanService и BackgroundPlanManager.
+    for tool_schema in planning_tools:
+        tool_name = (
+            tool_schema["function"]["name"]
+        )
+
+        registry.register(
+            schema=tool_schema,
+            handler=planning_handlers[
+                tool_name
+            ],
+        )
+
+    for tool_schema in background_plan_tools:
+        tool_name = (
+            tool_schema["function"]["name"]
+        )
+
+        registry.register(
+            schema=tool_schema,
+            handler=background_plan_handlers[
+                tool_name
+            ],
+        )
+
+    missing_deferred_tools = (
+        deferred_tool_names
+        - registry.names
+    )
+
+    if missing_deferred_tools:
+        raise RuntimeError(
+            (
+                "Не зарегистрированы отложенные "
+                "инструменты: "
+                + ", ".join(
+                    sorted(
+                        missing_deferred_tools
+                    )
+                )
+            )
+        )
+
+    logger.info(
+        "Tool registry собран. Инструментов: %s",
+        len(registry.names),
+    )
+
+    # =========================================================
+    # AGENT SERVICE
+    # =========================================================
+
+    agent = AgentService(
+        llm,
+        registry,
+        runner,
+    )
+
+    # =========================================================
+    # NOVA 2.0 INPUT HUB И НАСТРОЙКИ
+    # =========================================================
+
+    preferences = PreferencesManager()
+
+    input_coordinator = InputCoordinator()
+
+    direct_executor = DirectRequestExecutor(
+        runner=runner,
+        preferences=preferences,
+        session_id=agent.session_id,
+    )
+
+    request_dispatcher = RequestDispatcher(
+        agent=agent,
+        direct_executor=direct_executor,
+        intent_router=agent.intent_router,
+    )
+
+    # =========================================================
+    # ОБРАБОТЧИК ГОТОВОГО ОТВЕТА
+    #
+    # Функция должна быть объявлена ДО создания RequestService.
+    # =========================================================
+
+    async def handle_request_response(
+        request: UserRequest,
+        response: AssistantResponse,
+    ) -> None:
+        print(
+            f"\n[Nova]: "
+            f"{response.display_text}\n"
+        )
+
+        # Передаём точный ответ в Desktop UI.
+        desktop_service.publish(
+            "assistant_message",
+            {
+                "request_id": (
+                    request.request_id
+                ),
+                "display_text": (
+                    response.display_text
+                ),
+                "speech_text": (
+                    response.speech_text
+                ),
+                "success": response.success,
+                "error_code": (
+                    response.error_code
+                ),
+                "data": response.data,
+            },
+        )
+
+        preferences_snapshot = (
+            preferences.snapshot()
+        )
+
+        # В режиме с отключённым TTS экранный ответ всё равно
+        # публикуется, но голос не воспроизводится.
+        if (
+            preferences_snapshot.tts_enabled
+            and response.speech_text.strip()
+        ):
+            await speech.say(
+                response.speech_text,
+                priority=5,
+            )
+
+    # =========================================================
+    # REQUEST SERVICE
+    # =========================================================
+
+    request_service = RequestService(
+        coordinator=input_coordinator,
+        dispatcher=request_dispatcher,
+        response_handler=(
+            handle_request_response
+        ),
+    )
+
+    request_service_task = (
+        asyncio.create_task(
+            request_service.run(
+                runtime.shutdown_event
+            ),
+            name="nova-request-service",
+        )
+    )
+
+    # =========================================================
+    # DESKTOP BRIDGE
+    #
+    # Создаётся только после InputCoordinator, PreferencesManager
+    # и RequestService, потому что использует их методы.
+    # =========================================================
+
+    desktop_bridge = CoreDesktopBridge(
+        desktop=desktop_service,
+        process_manager=process_manager,
+        memory_store=memory_store,
+        permission_manager=(
+            runner.permission_manager
+        ),
+        llm=llm,
+        runtime=runtime,
+        input_coordinator=(
+            input_coordinator
+        ),
+        preferences=preferences,
+        cancel_current_request=(
+            request_service.cancel_current
+        ),
+    )
+
+    desktop_bridge_task = (
+        asyncio.create_task(
+            desktop_bridge.run(
+                runtime.shutdown_event
+            ),
+            name="nova-desktop-bridge",
+        )
+    )
+    plan_service = PlanService(
+        registry=registry,
+        runner=runner,
+    )
     plan_handlers = {
         "execute_plan": (
             plan_service.execute_plan
@@ -804,20 +1086,6 @@ async def async_main() -> None:
             plan_service.cancel_plan
         ),
     }
-    background_plan_handlers = {
-    "start_background_plan": (
-        background_plan_manager.start_plan
-    ),
-    "get_background_plan_status": (
-        background_plan_manager.get_status
-    ),
-    "list_background_plans": (
-        background_plan_manager.list_plans
-    ),
-    "cancel_background_plan": (
-        background_plan_manager.cancel_plan
-    ),
-}
 
     for schema in planning_tools:
         tool_name = schema["function"]["name"]
@@ -907,7 +1175,7 @@ async def async_main() -> None:
         run_voice_loop(
             runtime,
             speech,
-            agent,
+            input_coordinator,
             listener,
             app_launcher,
             windows_context,
@@ -924,13 +1192,18 @@ async def async_main() -> None:
         await voice_task
     finally:
         await runtime.request_shutdown()
+        await input_coordinator.close()
 
         reminder_task.cancel()
         voice_task.cancel()
+        request_service_task.cancel()
+        desktop_bridge_task.cancel()
 
         await asyncio.gather(
             reminder_task,
             voice_task,
+            request_service_task,
+            desktop_bridge_task,
             return_exceptions=True,
         )
 
@@ -947,6 +1220,7 @@ async def async_main() -> None:
         desktop_service.stop()
         stop_overlay()
         instance_lock.close()
+
 
 
 
