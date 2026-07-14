@@ -83,7 +83,7 @@ def test_denied_tool_is_rejected() -> None:
 
     assert not allowed
     assert reason is not None
-    assert "запрещён" in reason.lower()
+    assert "запрещен" in reason.lower()
 
 
 def test_confirm_and_deny_work() -> None:

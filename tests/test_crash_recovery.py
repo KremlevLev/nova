@@ -95,6 +95,12 @@ def test_process_manager_restores_metadata() -> None:
                 "process_id"
             ]
 
+            # Останавливаем процесс, чтобы освободить файлы логов.
+            manager.stop_process(
+                process_id,
+                force=True,
+            )
+
             # Симулируем перезапуск.
             manager2 = ProcessManager()
 

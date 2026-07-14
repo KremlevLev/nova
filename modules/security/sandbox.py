@@ -76,15 +76,10 @@ class PythonSandbox:
             exist_ok=True,
         )
 
-        script_path = (
-            sandbox_dir / "script.py"
-        )
-        stdout_path = (
-            sandbox_dir / "stdout.txt"
-        )
-        stderr_path = (
-            sandbox_dir / "stderr.txt"
-        )
+        script_name = "script.py"
+        script_path = sandbox_dir / script_name
+        stdout_path = sandbox_dir / "stdout.txt"
+        stderr_path = sandbox_dir / "stderr.txt"
 
         try:
             script_path.write_text(
@@ -118,12 +113,13 @@ class PythonSandbox:
                 sys.executable
                 or "python",
                 "-u",
-                str(script_path),
+                script_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(sandbox_dir),
                 env=env,
             )
+
 
             try:
                 stdout_bytes, stderr_bytes = (

@@ -57,10 +57,18 @@ def _resolve_path(
     Безопасно разрешает путь.
 
     Запрещает:
-    - выход за пределы рабочего каталога через ..
+    - выход за пределы рабочего каталога через ..;
     - запись в системные каталоги.
     """
-    resolved = Path(path).resolve()
+    raw = Path(path)
+
+    # Запрещаем явный выход за пределы через ..
+    if ".." in raw.parts:
+        raise PermissionError(
+            "Обход каталогов через '..' запрещён."
+        )
+
+    resolved = raw.resolve()
 
     if allow_write:
         for denied_path in DENY_LIST:
@@ -73,6 +81,7 @@ def _resolve_path(
                 continue
 
     return resolved
+
 
 
 def _safe_read(
