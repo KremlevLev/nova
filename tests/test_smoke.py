@@ -382,3 +382,24 @@ def test_all_modules_compile() -> None:
             raise AssertionError(
                 f"Модуль {module_name} не импортируется: {exc}"
             )
+
+def test_input_hub_import() -> None:
+    from modules.input_hub import (
+        InputCoordinator,
+        UserRequest,
+    )
+
+    assert InputCoordinator is not None
+    assert UserRequest is not None
+
+
+def test_routing_import() -> None:
+    from modules.routing import (
+        DeterministicIntentRouter,
+        ExecutionDecision,
+        ExecutionStrategy,
+    )
+
+    assert DeterministicIntentRouter is not None
+    assert ExecutionDecision is not None
+    assert ExecutionStrategy is not None

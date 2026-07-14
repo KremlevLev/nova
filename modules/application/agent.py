@@ -13,6 +13,15 @@ from modules.tools.budgets import (
     AgentBudget,
     BudgetManager,
 )
+from modules.input_hub.models import (
+    UserRequest,
+)
+from modules.routing.decision import (
+    ExecutionStrategy,
+)
+from modules.routing.intent import (
+    DeterministicIntentRouter,
+)
 
 from core.config import (
     MAX_AGENT_TURNS,
@@ -199,6 +208,10 @@ class AgentService:
             session_id
             or f"session_{uuid.uuid4().hex}"
         )
+        self.intent_router = (
+            DeterministicIntentRouter()
+        )
+
 
 
     async def _request_model(
@@ -496,7 +509,7 @@ class AgentService:
         )
     async def run(
         self,
-        user_text: str,
+        user_text: str | UserRequest,
         *,
         user_content: Any | None = None,
         use_tools: bool = True,
@@ -505,6 +518,31 @@ class AgentService:
         turn_id = (
             f"turn_{uuid.uuid4().hex}"
         )
+        if isinstance(
+            user_text,
+            UserRequest,
+        ):
+            request_object = user_text
+            resolved_user_text = (
+                request_object.text
+            )
+
+            if user_content is None:
+                user_content = (
+                    resolved_user_text
+                )
+
+            has_image = (
+                has_image
+                or request_object.has_image
+            )
+        else:
+            request_object = None
+            resolved_user_text = str(
+                user_text
+            )
+
+        user_text = resolved_user_text
 
         actual_user_content = (
             user_content
@@ -525,16 +563,107 @@ class AgentService:
             needs_tools=use_tools,
         )
 
-        selected_tool_names = select_tool_names(
-            user_text,
-            has_image=has_image,
+        execution_decision = (
+            self.intent_router.route(
+                request_object
+                if request_object is not None
+                else user_text,
+                has_image=has_image,
+            )
+        )
+
+        logger.info(
+            (
+                "Execution decision: "
+                "strategy=%s intent=%s "
+                "expected_model_calls=%s "
+                "expected_tool_calls=%s"
+            ),
+            execution_decision.strategy.value,
+            execution_decision.intent.value,
+            (
+                execution_decision
+                .expected_model_calls
+            ),
+            (
+                execution_decision
+                .expected_tool_calls
+            ),
+        )
+
+        if (
+            execution_decision.strategy
+            == ExecutionStrategy.CLARIFY
+        ):
+            question = (
+                execution_decision
+                .clarification_question
+                or "Уточните запрос."
+            )
+
+            return AssistantResponse(
+                display_text=question,
+                speech_text=question,
+                success=False,
+                error_code=(
+                    "CLARIFICATION_REQUIRED"
+                ),
+                data={
+                    "execution_decision": (
+                        execution_decision.to_dict()
+                    ),
+                },
+            )
+
+        if (
+            execution_decision.strategy
+            == ExecutionStrategy.DENY
+        ):
+            reason = (
+                execution_decision.denial_reason
+                or "Запрос запрещён."
+            )
+
+            return AssistantResponse(
+                display_text=reason,
+                speech_text=reason,
+                success=False,
+                error_code="REQUEST_DENIED",
+                data={
+                    "execution_decision": (
+                        execution_decision.to_dict()
+                    ),
+                },
+            )
+
+        if (
+            execution_decision.strategy
+            == ExecutionStrategy.CHAT
+        ):
+            use_tools = False
+
+        elif execution_decision.required_tools:
+            use_tools = True
+
+        selected_tool_names = (
+            set(
+                execution_decision.required_tools
+            )
+            if execution_decision.required_tools
+            else select_tool_names(
+                user_text,
+                has_image=has_image,
+            )
         )
 
         tool_schemas = (
-            self.registry.schemas(selected_tool_names)
+            self.registry.schemas(
+                selected_tool_names
+            )
             if use_tools
             else None
         )
+
 
         executed_signatures: set[str] = set()
         executed_tool_results: list[dict[str, Any]] = []
@@ -735,7 +864,7 @@ class AgentService:
                 ):
                     action_nudge_count += 1
 
-                    if action_nudge_count <= 2:
+                    if action_nudge_count <= 1:
                         self.history.append(
                             {
                                 "role": "system",
