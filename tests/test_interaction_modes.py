@@ -130,3 +130,54 @@ def test_mode_switch_interrupts_speech() -> None:
         assert speech.interruptions == 1
 
     asyncio.run(scenario())
+def test_same_wake_mode_still_synchronizes_runtime() -> None:
+    async def scenario() -> None:
+        runtime = RuntimeState()
+        preferences = PreferencesManager()
+
+        # Принудительно создаём рассинхронизацию:
+        # настройка уже WAKE_WORD, но runtime активен.
+        preferences.set_input_mode(
+            InputMode.WAKE_WORD
+        )
+        await runtime.activate()
+
+        manager = InteractionModeManager(
+            preferences=preferences,
+            runtime=runtime,
+        )
+
+        await manager.set_mode(
+            InputMode.WAKE_WORD
+        )
+
+        assert not runtime.is_active
+        assert (
+            preferences.snapshot().input_mode
+            == InputMode.WAKE_WORD
+        )
+
+    asyncio.run(scenario())
+def test_same_continuous_mode_still_activates_runtime() -> None:
+    async def scenario() -> None:
+        runtime = RuntimeState()
+        preferences = PreferencesManager()
+
+        preferences.set_input_mode(
+            InputMode.CONTINUOUS
+        )
+
+        assert not runtime.is_active
+
+        manager = InteractionModeManager(
+            preferences=preferences,
+            runtime=runtime,
+        )
+
+        await manager.set_mode(
+            InputMode.CONTINUOUS
+        )
+
+        assert runtime.is_active
+
+    asyncio.run(scenario())

@@ -39,16 +39,20 @@ class InteractionModeManager:
 
         self._lock = asyncio.Lock()
 
-    def attach_wake_runtime(
-        self,
-        wake_runtime,
-    ) -> None:
-        self.wake_runtime = wake_runtime
-
     async def set_mode(
         self,
         mode: InputMode,
     ) -> PreferencesSnapshot:
+        """
+        Устанавливает режим и синхронизирует RuntimeState.
+
+        Метод намеренно применяет состояние runtime даже тогда,
+        когда выбранный InputMode уже записан в PreferencesManager.
+        Это исправляет рассинхронизацию вида:
+
+            preferences = WAKE_WORD
+            runtime = active
+        """
         async with self._lock:
             previous_mode = (
                 self.preferences
@@ -56,37 +60,58 @@ class InteractionModeManager:
                 .input_mode
             )
 
-            if previous_mode == mode:
-                return self.preferences.snapshot()
-
-            logger.info(
-                "Переключение режима: %s -> %s",
-                previous_mode.value,
-                mode.value,
+            mode_changed = (
+                previous_mode != mode
             )
 
-            if self.speech is not None:
-                await self.speech.interrupt()
-
-            snapshot = (
-                self.preferences.set_input_mode(
-                    mode
+            if mode_changed:
+                logger.info(
+                    "Переключение режима: %s -> %s",
+                    previous_mode.value,
+                    mode.value,
                 )
-            )
 
+                if self.speech is not None:
+                    await self.speech.interrupt()
+
+                snapshot = (
+                    self.preferences.set_input_mode(
+                        mode
+                    )
+                )
+            else:
+                logger.debug(
+                    (
+                        "Режим %s уже выбран. "
+                        "Синхронизирую RuntimeState."
+                    ),
+                    mode.value,
+                )
+
+                snapshot = (
+                    self.preferences.snapshot()
+                )
+
+            # CONTINUOUS — единственный режим, в котором обычный
+            # VoiceListener должен непрерывно слушать микрофон.
             if mode == InputMode.CONTINUOUS:
-                await self.runtime.activate()
+                if not self.runtime.is_active:
+                    await self.runtime.activate()
 
-            elif mode in {
-                InputMode.WAKE_WORD,
-                InputMode.PUSH_TO_TALK,
-                InputMode.TEXT_ONLY,
-                InputMode.PRIVACY,
-                InputMode.SLEEP,
-            }:
-                await self.runtime.sleep()
+            else:
+                # WAKE_WORD слушает через отдельный лёгкий detector.
+                # PUSH_TO_TALK ждёт удержания горячей клавиши.
+                # TEXT_ONLY, PRIVACY и SLEEP не используют
+                # непрерывный VoiceListener.
+                if self.runtime.is_active:
+                    await self.runtime.sleep()
+                else:
+                    # Даже при уже неактивном runtime обновляем
+                    # визуальное состояние на СПИТ.
+                    await self.runtime.sleep()
 
             return snapshot
+
 
     async def set_mode_from_string(
         self,
