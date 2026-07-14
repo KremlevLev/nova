@@ -117,15 +117,41 @@ DEVELOPMENT_MARKERS = (
     "ошибк",
     "traceback",
 )
+INVALID_APPLICATION_TARGETS = {
+    "сайт",
+    "страницу",
+    "страница",
+    "тест",
+    "тесты",
+    "проект",
+    "проекте",
+    "код",
+    "команду",
+    "команда",
+    "терминал",
+    "сервер",
+    "процесс",
+    "все",
+    "все приложения",
+    "все программы",
+}
 
 WEB_MARKERS = (
     "сайт",
+    "страниц",
     "интернет",
     "веб-страниц",
     "документац",
-    "браузер",
+    "ссылка",
     "url",
+    "найди в сети",
+    "поищи в сети",
+    "прочитай сайт",
+    "прочитай страницу",
+    "открой сайт",
+    "перейди на сайт",
 )
+
 
 
 def normalize_request_text(
@@ -241,11 +267,25 @@ class DeterministicIntentRouter:
         *,
         has_image: bool | None = None,
     ) -> ExecutionDecision:
+        """
+        Определяет наиболее эффективную стратегию выполнения.
+
+        Приоритет правил важен:
+
+        1. Пустой запрос и vision.
+        2. Локальные настройки и опасные массовые команды.
+        3. Системные direct-команды.
+        4. Веб-задачи.
+        5. Запись в известное приложение.
+        6. Инженерные задачи.
+        7. Открытие и закрытие приложений.
+        8. Общие многошаговые задачи.
+        9. Неизвестные действия.
+        10. Чат.
+        """
         if isinstance(request, UserRequest):
             raw_text = request.text
-            request_has_image = (
-                request.has_image
-            )
+            request_has_image = request.has_image
         else:
             raw_text = str(request)
             request_has_image = False
@@ -256,6 +296,10 @@ class DeterministicIntentRouter:
         text = normalize_request_text(
             raw_text
         )
+
+        # -----------------------------------------------------
+        # 1. ПУСТОЙ ЗАПРОС И VISION
+        # -----------------------------------------------------
 
         if not text and not has_image:
             return ExecutionDecision.clarify(
@@ -282,6 +326,10 @@ class DeterministicIntentRouter:
                     "Запрос содержит изображение."
                 ),
             )
+
+        # -----------------------------------------------------
+        # 2. КОРОТКИЙ ЧАТ И ЛОКАЛЬНЫЕ НАСТРОЙКИ
+        # -----------------------------------------------------
 
         if text in CHAT_PHRASES:
             return ExecutionDecision.chat(
@@ -330,6 +378,10 @@ class DeterministicIntentRouter:
                 },
             )
 
+        # -----------------------------------------------------
+        # 3. ОПАСНЫЕ ИЛИ НЕОПРЕДЕЛЁННЫЕ BATCH-КОМАНДЫ
+        # -----------------------------------------------------
+
         if _requests_all_applications(text):
             return ExecutionDecision.clarify(
                 (
@@ -342,6 +394,10 @@ class DeterministicIntentRouter:
                     "небезопасен и неэффективен."
                 ),
             )
+
+        # -----------------------------------------------------
+        # 4. ПРЯМЫЕ СИСТЕМНЫЕ КОМАНДЫ
+        # -----------------------------------------------------
 
         if any(
             marker in text
@@ -361,6 +417,7 @@ class DeterministicIntentRouter:
                 needs_tools=True,
                 expected_model_calls=0,
                 expected_tool_calls=1,
+                confidence=1.0,
                 reason="Прямая команда времени.",
             )
 
@@ -384,8 +441,45 @@ class DeterministicIntentRouter:
                 needs_tools=True,
                 expected_model_calls=0,
                 expected_tool_calls=1,
+                confidence=1.0,
                 reason="Прямая команда громкости.",
             )
+
+        # -----------------------------------------------------
+        # 5. ВЕБ-ЗАДАЧИ
+        #
+        # Проверяются до общего application regex, чтобы фраза
+        # «открой сайт» не превращалась в запуск приложения
+        # с именем «сайт».
+        # -----------------------------------------------------
+
+        if _contains_any(
+            text,
+            WEB_MARKERS,
+        ):
+            return ExecutionDecision(
+                strategy=ExecutionStrategy.SKILL,
+                intent=IntentKind.WEB,
+                required_tools={
+                    "browser_open_url",
+                    "browser_get_page_text",
+                    "browser_click",
+                    "browser_fill",
+                    "browser_screenshot",
+                },
+                needs_model=True,
+                needs_tools=True,
+                expected_model_calls=1,
+                expected_tool_calls=2,
+                confidence=0.9,
+                reason=(
+                    "Распознана веб-задача."
+                ),
+            )
+
+        # -----------------------------------------------------
+        # 6. ПРИЛОЖЕНИЕ И ЗАПИСЬ ТЕКСТА
+        # -----------------------------------------------------
 
         application_name = (
             _extract_application_name(text)
@@ -437,6 +531,78 @@ class DeterministicIntentRouter:
                     "одним высокоуровневым skill."
                 ),
             )
+
+        # -----------------------------------------------------
+        # 7. ИНЖЕНЕРНЫЕ ЗАДАЧИ
+        #
+        # Проверяются до generic application open, чтобы
+        # «запусти тесты» не считалось запуском программы
+        # с названием «тесты».
+        # -----------------------------------------------------
+
+        if _contains_any(
+            text,
+            DEVELOPMENT_MARKERS,
+        ):
+            has_complex_structure = (
+                _contains_any(
+                    text,
+                    COMPLEX_MARKERS,
+                )
+            )
+
+            strategy = (
+                ExecutionStrategy.PLAN
+                if has_complex_structure
+                else ExecutionStrategy.SKILL
+            )
+
+            required_tools = {
+                "inspect_project",
+                "git_status",
+                "run_terminal_command",
+                "start_process",
+                "read_process_output",
+                "apply_text_patch",
+            }
+
+            if strategy == ExecutionStrategy.PLAN:
+                required_tools.add(
+                    "execute_plan"
+                )
+
+            return ExecutionDecision(
+                strategy=strategy,
+                intent=IntentKind.DEVELOPMENT,
+                required_tools=required_tools,
+                needs_model=True,
+                needs_tools=True,
+                expected_model_calls=(
+                    1
+                    if strategy
+                    == ExecutionStrategy.SKILL
+                    else 2
+                ),
+                expected_tool_calls=(
+                    1
+                    if strategy
+                    == ExecutionStrategy.SKILL
+                    else 4
+                ),
+                confidence=0.9,
+                reason=(
+                    "Распознана инженерная задача."
+                    if strategy
+                    == ExecutionStrategy.SKILL
+                    else
+                    "Распознана многошаговая "
+                    "инженерная задача."
+                ),
+            )
+
+        # -----------------------------------------------------
+        # 8. ОБЫЧНОЕ ОТКРЫТИЕ И ЗАКРЫТИЕ ПРИЛОЖЕНИЙ
+        # -----------------------------------------------------
 
         if (
             application_name
@@ -492,67 +658,9 @@ class DeterministicIntentRouter:
                 reason="Прямое закрытие приложения.",
             )
 
-        if _contains_any(
-            text,
-            DEVELOPMENT_MARKERS,
-        ):
-            strategy = (
-                ExecutionStrategy.PLAN
-                if _contains_any(
-                    text,
-                    COMPLEX_MARKERS,
-                )
-                else ExecutionStrategy.SKILL
-            )
-
-            return ExecutionDecision(
-                strategy=strategy,
-                intent=IntentKind.DEVELOPMENT,
-                required_tools={
-                    "inspect_project",
-                    "git_status",
-                    "run_terminal_command",
-                    "start_process",
-                    "read_process_output",
-                    "apply_text_patch",
-                },
-                needs_model=True,
-                needs_tools=True,
-                expected_model_calls=(
-                    2
-                    if strategy
-                    == ExecutionStrategy.PLAN
-                    else 1
-                ),
-                expected_tool_calls=4,
-                confidence=0.85,
-                reason=(
-                    "Инженерная задача требует анализа "
-                    "или плана."
-                ),
-            )
-
-        if _contains_any(
-            text,
-            WEB_MARKERS,
-        ):
-            return ExecutionDecision(
-                strategy=ExecutionStrategy.SKILL,
-                intent=IntentKind.WEB,
-                required_tools={
-                    "browser_open_url",
-                    "browser_get_page_text",
-                    "browser_click",
-                    "browser_fill",
-                    "browser_screenshot",
-                },
-                needs_model=True,
-                needs_tools=True,
-                expected_model_calls=1,
-                expected_tool_calls=2,
-                confidence=0.85,
-                reason="Веб-задача.",
-            )
+        # -----------------------------------------------------
+        # 9. ОБЩИЕ МНОГОШАГОВЫЕ ЗАДАЧИ
+        # -----------------------------------------------------
 
         if _contains_any(
             text,
@@ -564,15 +672,21 @@ class DeterministicIntentRouter:
                 required_tools={
                     "execute_plan",
                 },
+                selected_skill="execute_plan",
                 needs_model=True,
                 needs_tools=True,
                 expected_model_calls=1,
                 expected_tool_calls=1,
                 confidence=0.7,
                 reason=(
-                    "Обнаружены признаки многошаговой задачи."
+                    "Обнаружены признаки "
+                    "многошаговой задачи."
                 ),
             )
+
+        # -----------------------------------------------------
+        # 10. НЕИЗВЕСТНОЕ ОДИНОЧНОЕ ДЕЙСТВИЕ
+        # -----------------------------------------------------
 
         if re.search(
             (
@@ -594,6 +708,10 @@ class DeterministicIntentRouter:
                     "intent не определён."
                 ),
             )
+
+        # -----------------------------------------------------
+        # 11. ОБЫЧНЫЙ ЧАТ
+        # -----------------------------------------------------
 
         return ExecutionDecision.chat(
             reason=(

@@ -216,3 +216,78 @@ def test_unknown_action_uses_one_skill_turn() -> None:
         == ExecutionStrategy.SKILL
     )
     assert decision.expected_model_calls == 1
+def test_run_tests_is_not_application_open() -> None:
+    decision = create_router().route(
+        "Запусти тесты"
+    )
+
+    assert (
+        decision.intent
+        == IntentKind.DEVELOPMENT
+    )
+    assert (
+        decision.strategy
+        != ExecutionStrategy.DIRECT
+    )
+
+
+def test_open_site_is_not_application_open() -> None:
+    decision = create_router().route(
+        "Открой сайт example.com"
+    )
+
+    assert decision.intent == IntentKind.WEB
+    assert (
+        decision.strategy
+        == ExecutionStrategy.SKILL
+    )
+    assert "browser_open_url" in (
+        decision.required_tools
+    )
+
+
+def test_open_browser_is_application_open() -> None:
+    decision = create_router().route(
+        "Открой браузер"
+    )
+
+    assert (
+        decision.intent
+        == IntentKind.APPLICATION_OPEN
+    )
+    assert (
+        decision.strategy
+        == ExecutionStrategy.DIRECT
+    )
+    assert decision.arguments[
+        "app_name"
+    ] == "браузер"
+
+
+def test_open_project_is_development_not_app() -> None:
+    decision = create_router().route(
+        "Открой проект и запусти тесты"
+    )
+
+    assert (
+        decision.intent
+        == IntentKind.DEVELOPMENT
+    )
+
+
+def test_multi_step_development_expected_calls_are_bounded() -> None:
+    decision = create_router().route(
+        (
+            "Сначала проверь проект, затем "
+            "запусти тесты и исправь ошибки"
+        )
+    )
+
+    assert (
+        decision.expected_model_calls
+        <= 2
+    )
+    assert (
+        decision.expected_tool_calls
+        <= 4
+    )
