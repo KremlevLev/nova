@@ -295,3 +295,13 @@ High-level Windows skills:
 
 """
 SYSTEM_PROMPT = build_system_prompt()
+
+NOVA_DESKTOP_UI = os.getenv(
+    "NOVA_DESKTOP_UI",
+    "true",
+).lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}

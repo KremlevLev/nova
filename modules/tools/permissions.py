@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from modules.tools.policy import (
     PolicyContext,
@@ -32,28 +33,59 @@ class PermissionRequest:
 
     resolved: bool = False
     granted: bool = False
+    resolution: str | None = None
 
     def is_expired(self) -> bool:
-        if self.expires_at <= 0:
-            return False
+        return (
+            self.expires_at > 0
+            and time.time() > self.expires_at
+        )
 
-        return time.time() > self.expires_at
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "tool_name": (
+                self.policy_context.tool_name
+            ),
+            "category": (
+                self.policy_context.tool_category.value
+            ),
+            "risk": (
+                self.policy_context.risk.value
+            ),
+            "arguments": (
+                self.policy_context.arguments
+            ),
+            "source": self.policy_context.source,
+            "expected_window": (
+                self.policy_context.expected_window
+            ),
+            "working_directory": (
+                str(
+                    self.policy_context.working_directory
+                )
+                if (
+                    self.policy_context.working_directory
+                    is not None
+                )
+                else None
+            ),
+            "decision": self.decision.value,
+            "message": self.message,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "resolved": self.resolved,
+            "granted": self.granted,
+            "resolution": self.resolution,
+        }
 
 
 class PermissionManager:
     """
-    Централизованный менеджер разрешений.
+    Централизованный менеджер разрешений Nova.
 
-    В текущей реализации:
-    - ALLOW и ALLOW_WITH_WARNING проходят без подтверждения;
-    - REQUIRE_CONFIRMATION и REQUIRE_STRONG_CONFIRMATION
-      требуют вызова confirm() или deny().
-
-    В будущем:
-    - голосовое подтверждение;
-    - ПИН-код для сильного подтверждения;
-    - доверенные временные окна;
-    - политики по умолчанию для конкретных приложений.
+    Опасные действия ожидают решения пользователя. Если решение
+    не получено до timeout, действие запрещается.
     """
 
     def __init__(self) -> None:
@@ -61,6 +93,12 @@ class PermissionManager:
             str,
             PermissionRequest,
         ] = {}
+
+        self._resolution_events: dict[
+            str,
+            asyncio.Event,
+        ] = {}
+
         self._lock = threading.RLock()
 
     def request(
@@ -73,17 +111,15 @@ class PermissionManager:
             policy_context
         )
 
-        message = format_confirmation_message(
-            policy_context
-        )
-
         request = PermissionRequest(
             operation_id=(
                 policy_context.operation_id
             ),
             policy_context=policy_context,
             decision=decision,
-            message=message,
+            message=format_confirmation_message(
+                policy_context
+            ),
             expires_at=(
                 time.time()
                 + expires_after_seconds
@@ -101,15 +137,47 @@ class PermissionManager:
                 request.operation_id
             ] = request
 
+            self._resolution_events[
+                request.operation_id
+            ] = asyncio.Event()
+
         logger.info(
-            "Запрос разрешения: operation_id=%s "
-            "tool=%s decision=%s",
+            (
+                "Запрос разрешения: operation_id=%s "
+                "tool=%s decision=%s"
+            ),
             request.operation_id,
             policy_context.tool_name,
             decision.value,
         )
 
         return request
+
+    def check(
+        self,
+        policy_context: PolicyContext,
+    ) -> tuple[bool, str | None]:
+        decision = evaluate_policy(
+            policy_context
+        )
+
+        if decision == PolicyDecision.DENY:
+            return (
+                False,
+                (
+                    f"Инструмент "
+                    f"'{policy_context.tool_name}' "
+                    "запрещен политикой безопасности."
+                ),
+            )
+
+        if decision in {
+            PolicyDecision.REQUIRE_CONFIRMATION,
+            PolicyDecision.REQUIRE_STRONG_CONFIRMATION,
+        }:
+            return False, None
+
+        return True, None
 
     def confirm(
         self,
@@ -128,23 +196,24 @@ class PermissionManager:
                 return False
 
             if request.is_expired():
-                logger.warning(
-                    "Запрос %s истёк.",
-                    operation_id,
+                request.resolved = True
+                request.granted = False
+                request.resolution = "expired"
+                self._set_resolution_event(
+                    operation_id
                 )
                 return False
 
             if request.resolved:
-                logger.warning(
-                    "Запрос %s уже обработан.",
-                    operation_id,
-                )
                 return False
 
             request.resolved = True
             request.granted = True
+            request.resolution = "confirmed"
 
-            del self._pending[operation_id]
+            self._set_resolution_event(
+                operation_id
+            )
 
         logger.info(
             "Разрешено: operation_id=%s tool=%s",
@@ -157,6 +226,8 @@ class PermissionManager:
     def deny(
         self,
         operation_id: str,
+        *,
+        resolution: str = "denied",
     ) -> bool:
         with self._lock:
             request = self._pending.get(
@@ -171,8 +242,11 @@ class PermissionManager:
 
             request.resolved = True
             request.granted = False
+            request.resolution = resolution
 
-            del self._pending[operation_id]
+            self._set_resolution_event(
+                operation_id
+            )
 
         logger.info(
             "Запрещено: operation_id=%s tool=%s",
@@ -182,39 +256,16 @@ class PermissionManager:
 
         return True
 
-    def check(
+    def _set_resolution_event(
         self,
-        policy_context: PolicyContext,
-    ) -> tuple[bool, str | None]:
-        """
-        Синхронная проверка без ожидания подтверждения.
-
-        Возвращает:
-        - (True, None) — разрешено;
-        - (False, "причина") — запрещено;
-        - (False, None) — требуется подтверждение.
-        """
-        decision = evaluate_policy(
-            policy_context
+        operation_id: str,
+    ) -> None:
+        event = self._resolution_events.get(
+            operation_id
         )
 
-        if decision == PolicyDecision.DENY:
-            return (
-                False,
-                (
-                    f"Инструмент "
-                    f"'{policy_context.tool_name}' "
-                    "запрещён политикой безопасности."
-                ),
-            )
-
-        if decision in {
-            PolicyDecision.REQUIRE_CONFIRMATION,
-            PolicyDecision.REQUIRE_STRONG_CONFIRMATION,
-        }:
-            return (False, None)
-
-        return (True, None)
+        if event is not None:
+            event.set()
 
     async def wait_for_confirmation(
         self,
@@ -222,17 +273,6 @@ class PermissionManager:
         *,
         timeout_seconds: float = 60.0,
     ) -> bool:
-        """
-        Асинхронно ожидает подтверждения.
-
-        В текущей реализации — заглушка, которая всегда
-        возвращает True.
-
-        В будущем:
-        - отправляет событие в UI;
-        - ожидает ответа пользователя;
-        - применяет таймаут.
-        """
         request = self.request(
             policy_context,
             expires_after_seconds=(
@@ -244,22 +284,109 @@ class PermissionManager:
             PolicyDecision.ALLOW,
             PolicyDecision.ALLOW_WITH_WARNING,
         }:
+            self._remove_request(
+                request.operation_id
+            )
             return True
 
         if request.decision == PolicyDecision.DENY:
+            self._remove_request(
+                request.operation_id
+            )
             return False
 
-        # Временная заглушка: всегда разрешаем.
-        # TODO: интеграция с UI.
-        logger.info(
-            "Ожидание подтверждения: operation_id=%s "
-            "tool=%s (заглушка: разрешено)",
-            request.operation_id,
-            policy_context.tool_name,
+        with self._lock:
+            event = self._resolution_events[
+                request.operation_id
+            ]
+
+        try:
+            await asyncio.wait_for(
+                event.wait(),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            self.deny(
+                request.operation_id,
+                resolution="timeout",
+            )
+
+        with self._lock:
+            resolved_request = self._pending.get(
+                request.operation_id
+            )
+
+            granted = bool(
+                resolved_request
+                and resolved_request.resolved
+                and resolved_request.granted
+            )
+
+        self._remove_request(
+            request.operation_id
         )
 
-        await asyncio.sleep(0.1)
+        return granted
 
-        self.confirm(request.operation_id)
+    def _remove_request(
+        self,
+        operation_id: str,
+    ) -> None:
+        with self._lock:
+            self._pending.pop(
+                operation_id,
+                None,
+            )
+            self._resolution_events.pop(
+                operation_id,
+                None,
+            )
 
-        return True
+    def pending_requests(
+        self,
+    ) -> list[dict[str, Any]]:
+        """
+        Возвращает безопасную копию ожидающих запросов для UI.
+        """
+        expired_ids: list[str] = []
+
+        with self._lock:
+            requests = list(
+                self._pending.values()
+            )
+
+            for request in requests:
+                if (
+                    request.is_expired()
+                    and not request.resolved
+                ):
+                    expired_ids.append(
+                        request.operation_id
+                    )
+
+        for operation_id in expired_ids:
+            self.deny(
+                operation_id,
+                resolution="expired",
+            )
+
+        with self._lock:
+            return [
+                request.to_dict()
+                for request in self._pending.values()
+                if not request.resolved
+            ]
+
+    def get_request(
+        self,
+        operation_id: str,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            request = self._pending.get(
+                operation_id
+            )
+
+            if request is None:
+                return None
+
+            return request.to_dict()

@@ -3,6 +3,15 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from core.config import NOVA_DESKTOP_UI
+
+from modules.ui.desktop_service import (
+    DesktopService,
+)
+from modules.ui.core_bridge import (
+    CoreDesktopBridge,
+)
+
 from modules.tools.registry import (
     ALL_TOOLS,
     planning_tools,
@@ -605,6 +614,17 @@ async def run_voice_loop(
 
 async def async_main() -> None:
     instance_lock = acquire_instance_lock()
+    desktop_service = DesktopService()
+
+    if NOVA_DESKTOP_UI:
+        try:
+            desktop_service.start()
+        except Exception:
+            logger.exception(
+                "Не удалось запустить Desktop UI."
+            )
+
+
     windows_context = WindowsContext()
     start_overlay()
     runtime = RuntimeState(update_status)
@@ -663,6 +683,23 @@ async def async_main() -> None:
     )
 
     runner = ToolRunner(registry)
+    desktop_bridge = CoreDesktopBridge(
+        desktop=desktop_service,
+        process_manager=process_manager,
+        memory_store=memory_store,
+        permission_manager=(
+            runner.permission_manager
+        ),
+        llm=llm,
+        runtime=runtime,
+    )
+
+    desktop_bridge_task = asyncio.create_task(
+        desktop_bridge.run(
+            runtime.shutdown_event
+        ),
+        name="nova-desktop-bridge",
+    )
 
     # PlanService использует готовые registry и runner.
     plan_service = PlanService(
@@ -907,6 +944,7 @@ async def async_main() -> None:
         process_manager.cleanup_all()
         database.close()
 
+        desktop_service.stop()
         stop_overlay()
         instance_lock.close()
 

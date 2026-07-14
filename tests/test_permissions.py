@@ -144,3 +144,78 @@ def test_wait_for_confirmation_returns_true_for_low_risk() -> None:
         assert granted
 
     asyncio.run(scenario())
+def test_pending_requests_are_visible() -> None:
+    manager = PermissionManager()
+
+    context = create_policy_context(
+        "run_terminal_command",
+        risk=RiskLevel.EXECUTE,
+    )
+
+    request = manager.request(context)
+
+    pending = manager.pending_requests()
+
+    assert len(pending) == 1
+    assert (
+        pending[0]["operation_id"]
+        == request.operation_id
+    )
+
+
+def test_wait_for_confirmation_can_be_confirmed() -> None:
+    async def scenario() -> None:
+        manager = PermissionManager()
+
+        context = create_policy_context(
+            "run_terminal_command",
+            risk=RiskLevel.EXECUTE,
+        )
+
+        wait_task = asyncio.create_task(
+            manager.wait_for_confirmation(
+                context,
+                timeout_seconds=2.0,
+            )
+        )
+
+        await asyncio.sleep(0.05)
+
+        pending = manager.pending_requests()
+
+        assert len(pending) == 1
+
+        operation_id = pending[0][
+            "operation_id"
+        ]
+
+        assert manager.confirm(
+            operation_id
+        )
+
+        granted = await wait_task
+
+        assert granted
+
+    asyncio.run(scenario())
+
+
+def test_permission_timeout_denies() -> None:
+    async def scenario() -> None:
+        manager = PermissionManager()
+
+        context = create_policy_context(
+            "run_terminal_command",
+            risk=RiskLevel.EXECUTE,
+        )
+
+        granted = (
+            await manager.wait_for_confirmation(
+                context,
+                timeout_seconds=0.02,
+            )
+        )
+
+        assert not granted
+
+    asyncio.run(scenario())

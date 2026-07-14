@@ -13,3 +13,4 @@ tenacity>=9.1.4
 torch>=2.11.0
 scipy
 playwright
+PySide6
