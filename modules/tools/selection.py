@@ -112,7 +112,22 @@ MEMORY_STORE_TOOLS = {
     "delete_memory",
     "clear_all_memories",
 }
+BROWSER_AGENT_TOOLS = {
+    "browser_start",
+    "browser_open_url",
+    "browser_get_page_text",
+    "browser_click",
+    "browser_fill",
+    "browser_screenshot",
+    "browser_status",
+    "browser_close",
+}
 
+PLANNING_TOOLS = {
+    "execute_plan",
+    "get_plan_status",
+    "cancel_plan",
+}
 ARTIFACT_TOOLS = {
     "store_artifact",
     "read_artifact",
@@ -166,6 +181,30 @@ def select_tool_names(
         "visual studio code",
         "калькулятор",
         "проводник",
+    )
+    browser_agent_markers = (
+        "браузер",
+        "открой сайт",
+        "перейди на сайт",
+        "веб-страниц",
+        "страница сайта",
+        "заполни форму",
+        "нажми на сайте",
+        "прочитай сайт",
+        "прочитай страницу",
+        "сделай скриншот страницы",
+    )
+
+    planning_markers = (
+        "сделай по шагам",
+        "выполни план",
+        "многошагов",
+        "сначала",
+        "затем",
+        "после этого",
+        "после чего",
+        "проверь результат",
+        "если успешно",
     )
 
     text_input_markers = (
@@ -319,6 +358,7 @@ def select_tool_names(
         "сохрани лог",
         "прочитай артефакт",
     )
+    
 
     if contains_any(text, application_markers):
         selected |= APPLICATION_TOOLS
@@ -355,6 +395,28 @@ def select_tool_names(
 
     if contains_any(text, git_markers):
         selected |= GIT_TOOLS
+    if contains_any(
+        text,
+        browser_agent_markers,
+    ):
+        selected |= BROWSER_AGENT_TOOLS
+
+    if contains_any(
+        text,
+        planning_markers,
+    ):
+        selected |= PLANNING_TOOLS
+    if (
+        contains_any(
+            text,
+            development_markers,
+        )
+        and contains_any(
+            text,
+            planning_markers,
+        )
+    ):
+        selected |= PLANNING_TOOLS
 
     if contains_any(text, project_markers):
         selected |= PROJECT_TOOLS

@@ -1005,3 +1005,303 @@ artifact_tools = [
 ]
 
 ALL_TOOLS.extend(artifact_tools)
+
+browser_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_start",
+            "description": (
+                "Запускает изолированный браузер Nova."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_open_url",
+            "description": (
+                "Открывает безопасный публичный HTTP "
+                "или HTTPS адрес в изолированном браузере."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048,
+                    },
+                    "wait_until": {
+                        "type": "string",
+                        "enum": [
+                            "load",
+                            "domcontentloaded",
+                            "networkidle",
+                            "commit",
+                        ],
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "minimum": 1000,
+                        "maximum": 120000,
+                    },
+                },
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_get_page_text",
+            "description": (
+                "Извлекает текст из текущей страницы "
+                "или указанного DOM-элемента."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "maxLength": 500,
+                    },
+                    "max_characters": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50000,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click",
+            "description": (
+                "Нажимает первый видимый DOM-элемент "
+                "по Playwright CSS-селектору."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500,
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "minimum": 1000,
+                        "maximum": 120000,
+                    },
+                },
+                "required": ["selector"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_fill",
+            "description": (
+                "Вводит текст в поле формы текущей страницы."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500,
+                    },
+                    "text": {
+                        "type": "string",
+                        "maxLength": 100000,
+                    },
+                    "clear_first": {
+                        "type": "boolean",
+                    },
+                },
+                "required": [
+                    "selector",
+                    "text",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": (
+                "Сохраняет снимок текущей страницы браузера."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "full_page": {
+                        "type": "boolean",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_status",
+            "description": (
+                "Возвращает состояние изолированного браузера."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_close",
+            "description": (
+                "Закрывает изолированный браузер Nova."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(browser_tools)
+planning_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_plan",
+            "description": (
+                "Валидирует и выполняет многошаговый план. "
+                "Используйте для сложных задач с зависимостями. "
+                "Каждый шаг вызывает зарегистрированный инструмент."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                    },
+                    "steps": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step_id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100,
+                                },
+                                "tool_name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100,
+                                },
+                                "arguments": {
+                                    "type": "object",
+                                    "properties": {},
+                                },
+                                "depends_on": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                    },
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "maxLength": 1000,
+                                },
+                                "critical": {
+                                    "type": "boolean",
+                                },
+                            },
+                            "required": [
+                                "step_id",
+                                "tool_name",
+                                "arguments",
+                            ],
+                        },
+                    },
+                    "session_id": {
+                        "type": "string",
+                    },
+                    "turn_id": {
+                        "type": "string",
+                    },
+                },
+                "required": [
+                    "goal",
+                    "steps",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_plan_status",
+            "description": (
+                "Возвращает состояние ранее созданного плана."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {
+                        "type": "string",
+                    },
+                },
+                "required": ["plan_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_plan",
+            "description": (
+                "Отменяет активный план."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {
+                        "type": "string",
+                    },
+                },
+                "required": ["plan_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(planning_tools)

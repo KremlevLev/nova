@@ -82,6 +82,19 @@ RISK_BY_TOOL: dict[str, RiskLevel] = {
     "close_application": RiskLevel.DESTRUCTIVE,
     "manage_windows": RiskLevel.DESTRUCTIVE,
     "execute_cmd_command": RiskLevel.DESTRUCTIVE,
+    "browser_start": RiskLevel.LOW,
+    "browser_open_url": RiskLevel.LOW,
+    "browser_get_page_text": RiskLevel.READ_ONLY,
+    "browser_click": RiskLevel.WRITE,
+    "browser_fill": RiskLevel.WRITE,
+    "browser_screenshot": RiskLevel.READ_ONLY,
+    "browser_status": RiskLevel.READ_ONLY,
+    "browser_close": RiskLevel.LOW,
+
+    "execute_plan": RiskLevel.EXECUTE,
+    "get_plan_status": RiskLevel.READ_ONLY,
+    "cancel_plan": RiskLevel.LOW,
+
 }
 
 
@@ -125,6 +138,20 @@ CATEGORY_BY_TOOL: dict[str, ToolCategory] = {
     "create_workspace_project": (
         ToolCategory.DEVELOPMENT
     ),
+
+    "browser_start": ToolCategory.WEB_READ,
+    "browser_open_url": ToolCategory.WEB_READ,
+    "browser_get_page_text": ToolCategory.WEB_READ,
+    "browser_click": ToolCategory.NETWORK_WRITE,
+    "browser_fill": ToolCategory.NETWORK_WRITE,
+    "browser_screenshot": ToolCategory.WEB_READ,
+    "browser_status": ToolCategory.WEB_READ,
+    "browser_close": ToolCategory.WEB_READ,
+
+    "execute_plan": ToolCategory.DEVELOPMENT,
+    "get_plan_status": ToolCategory.DEVELOPMENT,
+    "cancel_plan": ToolCategory.DEVELOPMENT,
+
 }
 
 
@@ -137,6 +164,11 @@ IDEMPOTENT_TOOLS = {
     "get_clipboard_content",
     "search_web_tavily",
     "scrape_webpage",
+    "browser_get_page_text",
+    "browser_screenshot",
+    "browser_status",
+    "get_plan_status",
+
 }
 
 

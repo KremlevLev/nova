@@ -11,6 +11,10 @@ from modules.storage.conversations import (
     ConversationStore,
 )
 from modules.storage.memories import MemoryStore
+from modules.tools.registry import (
+    ALL_TOOLS,
+    planning_tools,
+)
 
 from modules.windows.git_tools import (
     git_status,
@@ -18,6 +22,12 @@ from modules.windows.git_tools import (
     git_log,
     git_commit,
     git_branch,
+)
+from modules.agent.plan_service import (
+    PlanService,
+)
+from modules.browser.manager import (
+    BrowserManager,
 )
 from modules.windows.project_inspector import (
     inspect_project,
@@ -158,6 +168,9 @@ def build_handlers(
     scheduler: TaskScheduler,
     app_launcher: WindowsAppIndexer,
     process_manager: ProcessManager,
+    memory_store: MemoryStore,
+    artifact_store: ArtifactStore,
+    browser_manager: BrowserManager,
 ) -> dict[str, Callable[..., Any]]:
     
     windows_skills = WindowsSkills(
@@ -354,6 +367,30 @@ def build_handlers(
                 "store_artifact": store_artifact_handler,
         "read_artifact": read_artifact_handler,
         "delete_artifact": delete_artifact_handler,
+        "browser_start": (
+            browser_manager.start
+        ),
+        "browser_open_url": (
+            browser_manager.open_url
+        ),
+        "browser_get_page_text": (
+            browser_manager.get_page_text
+        ),
+        "browser_click": (
+            browser_manager.click
+        ),
+        "browser_fill": (
+            browser_manager.fill
+        ),
+        "browser_screenshot": (
+            browser_manager.screenshot
+        ),
+        "browser_status": (
+            browser_manager.status
+        ),
+        "browser_close": (
+            browser_manager.close
+        ),
 
     }
 
@@ -568,6 +605,9 @@ async def async_main() -> None:
     start_overlay()
     runtime = RuntimeState(update_status)
     speech = SpeechService(runtime)
+    browser_manager = BrowserManager(
+    headless=False
+)
 
     memory = LocalMemory()
     scheduler = TaskScheduler()
@@ -578,18 +618,65 @@ async def async_main() -> None:
     llm = NovaLLM()
 
     handlers = build_handlers(
-    memory,
-    scheduler,
-    app_launcher,
-    process_manager
-)
+        memory,
+        scheduler,
+        app_launcher,
+        process_manager,
+        memory_store,
+        artifact_store,
+        browser_manager,
+    )
+
+    planning_tool_names = {
+        tool["function"]["name"]
+        for tool in planning_tools
+    }
+
+    base_tool_schemas = [
+        tool
+        for tool in ALL_TOOLS
+        if tool["function"]["name"]
+        not in planning_tool_names
+    ]
 
     registry = ToolRegistry.from_legacy(
-        ALL_TOOLS,
+        base_tool_schemas,
         handlers,
     )
+
     runner = ToolRunner(registry)
-    agent = AgentService(llm, registry, runner)
+
+    plan_service = PlanService(
+        registry=registry,
+        runner=runner,
+    )
+
+    plan_handlers = {
+        "execute_plan": (
+            plan_service.execute_plan
+        ),
+        "get_plan_status": (
+            plan_service.get_plan_status
+        ),
+        "cancel_plan": (
+            plan_service.cancel_plan
+        ),
+    }
+
+    for schema in planning_tools:
+        tool_name = schema["function"]["name"]
+
+        registry.register(
+            schema=schema,
+            handler=plan_handlers[tool_name],
+        )
+
+    agent = AgentService(
+        llm,
+        registry,
+        runner,
+    )
+
 
     loop = asyncio.get_running_loop()
     hotkey_handles: list[Any] = []

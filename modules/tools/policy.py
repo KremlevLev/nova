@@ -92,6 +92,8 @@ ALWAYS_CONFIRMED = frozenset(
         "execute_cmd_command",
         "close_application",
         "manage_windows",
+        "execute_plan",
+
     }
 )
 
