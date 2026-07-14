@@ -571,7 +571,7 @@ class VoiceListener:
             "Пробую локальный fallback."
         )
 
-        return self._transcribe_local(
+            return self._transcribe_local(
             wav_path
         )
 
