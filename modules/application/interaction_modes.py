@@ -38,6 +38,136 @@ class InteractionModeManager:
         self.wake_runtime = wake_runtime
 
         self._lock = asyncio.Lock()
+        # Режим, в который нужно вернуться после завершения
+        # временной голосовой сессии по горячей клавише.
+        self._manual_return_mode: InputMode | None = None
+
+    def attach_wake_runtime(
+        self,
+        wake_runtime,
+    ) -> None:
+        """
+        Подключает WakeWordRuntime после его создания.
+
+        InteractionModeManager создаётся раньше WakeWordRuntime,
+        поэтому зависимость подключается отдельно после bootstrap.
+        """
+        self.wake_runtime = wake_runtime
+
+        logger.info(
+            "WakeWordRuntime подключён к менеджеру режимов."
+        )
+    @property
+    def wake_word_available(self) -> bool:
+        """
+        Проверяет, настроен ли реальный wake-word detector.
+        """
+        wake_runtime = self.wake_runtime
+
+        if wake_runtime is None:
+            return False
+
+        detector = getattr(
+            wake_runtime,
+            "detector",
+            None,
+        )
+
+        return bool(
+            detector is not None
+            and detector.available
+        )
+
+    async def toggle_manual_voice(
+        self,
+    ) -> tuple[bool, PreferencesSnapshot]:
+        """
+        Переключает ручную голосовую сессию по горячей клавише.
+
+        Первое нажатие:
+            WAKE_WORD/SLEEP/TEXT_ONLY -> CONTINUOUS
+
+        Второе нажатие:
+            CONTINUOUS -> прежний режим
+
+        Если прежний режим неизвестен, но wake word настроен,
+        Nova возвращается в WAKE_WORD.
+        """
+        snapshot = self.preferences.snapshot()
+
+        if (
+            snapshot.input_mode
+            == InputMode.CONTINUOUS
+            and self.runtime.is_active
+        ):
+            return_mode = (
+                self._manual_return_mode
+            )
+
+            if return_mode is None:
+                return_mode = (
+                    InputMode.WAKE_WORD
+                    if self.wake_word_available
+                    else InputMode.SLEEP
+                )
+
+            # Не возвращаемся в CONTINUOUS из CONTINUOUS.
+            if return_mode == InputMode.CONTINUOUS:
+                return_mode = (
+                    InputMode.WAKE_WORD
+                    if self.wake_word_available
+                    else InputMode.SLEEP
+                )
+
+            self._manual_return_mode = None
+
+            updated_snapshot = (
+                await self.set_mode(
+                    return_mode
+                )
+            )
+
+            logger.info(
+                (
+                    "Ручная голосовая сессия выключена. "
+                    "Возврат в режим %s."
+                ),
+                return_mode.value,
+            )
+
+            return False, updated_snapshot
+
+        current_mode = snapshot.input_mode
+
+        # Запоминаем режим, который был активен до горячей клавиши.
+        if current_mode != InputMode.CONTINUOUS:
+            self._manual_return_mode = (
+                current_mode
+            )
+        elif self.wake_word_available:
+            self._manual_return_mode = (
+                InputMode.WAKE_WORD
+            )
+        else:
+            self._manual_return_mode = (
+                InputMode.SLEEP
+            )
+
+        updated_snapshot = (
+            await self.set_mode(
+                InputMode.CONTINUOUS
+            )
+        )
+
+        logger.info(
+            (
+                "Ручная голосовая сессия включена. "
+                "Режим возврата: %s."
+            ),
+            self._manual_return_mode.value,
+        )
+
+        return True, updated_snapshot
 
     async def set_mode(
         self,

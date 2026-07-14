@@ -264,9 +264,7 @@ def run_desktop(
                 {
                     "text": text,
                     "profile": profile,
-                    "model_mode": (
-                        model_mode
-                    ),
+                    "model_mode": model_mode,
                 },
             )
 
@@ -377,10 +375,6 @@ def run_desktop(
             root_layout = QVBoxLayout(root)
 
             header_layout = QHBoxLayout()
-            self.tabs.addTab(
-                self._create_chat_tab(),
-                "Чат",
-            )
 
             self.title_label = QLabel(
                 "NOVA CONTROL CENTER"
@@ -421,7 +415,10 @@ def run_desktop(
             )
 
             self.tabs = QTabWidget()
-
+            self.tabs.addTab(
+                self._create_chat_tab(),
+                "Чат",
+            )
             self.tabs.addTab(
                 self._create_overview_tab(),
                 "Обзор",

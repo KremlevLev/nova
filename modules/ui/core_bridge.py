@@ -179,6 +179,12 @@ class CoreDesktopBridge:
         self,
         command: dict[str, Any],
     ) -> None:
+        logger.info(
+            "Получена команда Desktop UI: action=%s command_id=%s",
+            command.get("action"),
+            command.get("command_id"),
+        )
+
         valid, error = validate_command(
             command
         )

@@ -181,3 +181,125 @@ def test_same_continuous_mode_still_activates_runtime() -> None:
         assert runtime.is_active
 
     asyncio.run(scenario())
+def test_attach_wake_runtime() -> None:
+    runtime = RuntimeState()
+    preferences = PreferencesManager()
+
+    manager = InteractionModeManager(
+        preferences=preferences,
+        runtime=runtime,
+    )
+
+    fake_wake_runtime = object()
+
+    manager.attach_wake_runtime(
+        fake_wake_runtime
+    )
+
+    assert (
+        manager.wake_runtime
+        is fake_wake_runtime
+    )
+def test_manual_voice_returns_to_wake_word() -> None:
+    async def scenario() -> None:
+        runtime = RuntimeState()
+        preferences = PreferencesManager()
+
+        preferences.set_input_mode(
+            InputMode.WAKE_WORD
+        )
+
+        manager = InteractionModeManager(
+            preferences=preferences,
+            runtime=runtime,
+        )
+
+        class FakeDetector:
+            available = True
+
+        class FakeWakeRuntime:
+            detector = FakeDetector()
+
+        manager.attach_wake_runtime(
+            FakeWakeRuntime()
+        )
+
+        active, snapshot = (
+            await manager.toggle_manual_voice()
+        )
+
+        assert active
+        assert runtime.is_active
+        assert (
+            snapshot.input_mode
+            == InputMode.CONTINUOUS
+        )
+
+        active, snapshot = (
+            await manager.toggle_manual_voice()
+        )
+
+        assert not active
+        assert not runtime.is_active
+        assert (
+            snapshot.input_mode
+            == InputMode.WAKE_WORD
+        )
+
+    asyncio.run(scenario())
+
+
+def test_manual_voice_without_wake_returns_to_sleep() -> None:
+    async def scenario() -> None:
+        runtime = RuntimeState()
+        preferences = PreferencesManager()
+
+        preferences.set_input_mode(
+            InputMode.SLEEP
+        )
+
+        manager = InteractionModeManager(
+            preferences=preferences,
+            runtime=runtime,
+        )
+
+        active, _ = (
+            await manager.toggle_manual_voice()
+        )
+
+        assert active
+        assert runtime.is_active
+
+        active, snapshot = (
+            await manager.toggle_manual_voice()
+        )
+
+        assert not active
+        assert not runtime.is_active
+        assert (
+            snapshot.input_mode
+            == InputMode.SLEEP
+        )
+
+    asyncio.run(scenario())
+
+
+def test_wake_detector_availability() -> None:
+    manager = InteractionModeManager(
+        preferences=PreferencesManager(),
+        runtime=RuntimeState(),
+    )
+
+    assert not manager.wake_word_available
+
+    class FakeDetector:
+        available = True
+
+    class FakeWakeRuntime:
+        detector = FakeDetector()
+
+    manager.attach_wake_runtime(
+        FakeWakeRuntime()
+    )
+
+    assert manager.wake_word_available

@@ -102,6 +102,19 @@ class RequestService:
                 break
 
             request = request_task.result()
+            logger.info(
+                "RequestService получил запрос: request_id=%s text=%r",
+                (
+                    request.request_id
+                    if request is not None
+                    else None
+                ),
+                (
+                    request.text
+                    if request is not None
+                    else None
+                ),
+            )
 
             if request is None:
                 self.coordinator.task_done(
@@ -126,6 +139,15 @@ class RequestService:
 
                 response = (
                     await self._current_task
+                )
+                logger.info(
+                    (
+                        "RequestService получил ответ: "
+                        "request_id=%s success=%s error=%s"
+                    ),
+                    request.request_id,
+                    response.success,
+                    response.error_code,
                 )
 
                 if (

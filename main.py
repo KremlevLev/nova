@@ -486,9 +486,11 @@ async def run_voice_loop(
             preferences.snapshot().input_mode
         )
 
-        if current_mode not in {
-            InputMode.CONTINUOUS,
-        }:
+        if (
+            current_mode
+            != InputMode.CONTINUOUS
+            or not runtime.is_active
+        ):
             await asyncio.sleep(0.2)
             continue
         if not runtime.is_active:
@@ -752,111 +754,6 @@ async def async_main() -> None:
             not in deferred_tool_names
         )
     ]
-
-    registry = ToolRegistry.from_legacy(
-        base_tool_schemas,
-        handlers,
-    )
-
-    runner = ToolRunner(registry)
-
-    # PlanService использует готовые registry и runner.
-    plan_service = PlanService(
-        registry=registry,
-        runner=runner,
-    )
-
-    # Менеджер фоновых планов использует PlanService.
-    background_plan_manager = (
-        BackgroundPlanManager(
-            plan_service
-        )
-    )
-
-    planning_handlers = {
-        "execute_plan": (
-            plan_service.execute_plan
-        ),
-        "get_plan_status": (
-            plan_service.get_plan_status
-        ),
-        "cancel_plan": (
-            plan_service.cancel_plan
-        ),
-    }
-
-    background_plan_handlers = {
-        "start_background_plan": (
-            background_plan_manager.start_plan
-        ),
-        "get_background_plan_status": (
-            background_plan_manager.get_status
-        ),
-        "list_background_plans": (
-            background_plan_manager.list_plans
-        ),
-        "cancel_background_plan": (
-            background_plan_manager.cancel_plan
-        ),
-    }
-
-    # Теперь регистрируем обычные инструменты планирования.
-    for tool_schema in planning_tools:
-        tool_name = (
-            tool_schema["function"]["name"]
-        )
-
-        registry.register(
-            schema=tool_schema,
-            handler=planning_handlers[
-                tool_name
-            ],
-        )
-
-    # Затем регистрируем инструменты фоновых планов.
-    for tool_schema in background_plan_tools:
-        tool_name = (
-            tool_schema["function"]["name"]
-        )
-
-        registry.register(
-            schema=tool_schema,
-            handler=background_plan_handlers[
-                tool_name
-            ],
-        )
-
-    # AgentService получает полностью собранный registry.
-    agent = AgentService(
-        llm,
-        registry,
-        runner,
-    )
-    preferences = PreferencesManager()
-    mode_manager = InteractionModeManager(
-        preferences=preferences,
-        runtime=runtime,
-        speech=speech,
-    )
-
-    input_coordinator = InputCoordinator()
-
-    direct_executor = DirectRequestExecutor(
-        runner=runner,
-        preferences=preferences,
-        session_id=agent.session_id,
-        mode_manager=mode_manager,
-
-    )
-
-    request_dispatcher = RequestDispatcher(
-        agent=agent,
-        direct_executor=direct_executor,
-        intent_router=(
-            agent.intent_router
-        ),
-    )
-
     # =========================================================
     # TOOL PLATFORM
     # =========================================================
@@ -977,6 +874,11 @@ async def async_main() -> None:
     # =========================================================
 
     preferences = PreferencesManager()
+    mode_manager = InteractionModeManager(
+        preferences=preferences,
+        runtime=runtime,
+        speech=speech,
+    )
 
     input_coordinator = InputCoordinator()
 
@@ -984,6 +886,7 @@ async def async_main() -> None:
         runner=runner,
         preferences=preferences,
         session_id=agent.session_id,
+        mode_manager=mode_manager,
     )
 
     request_dispatcher = RequestDispatcher(
@@ -1055,13 +958,11 @@ async def async_main() -> None:
         ),
     )
 
-    request_service_task = (
-        asyncio.create_task(
-            request_service.run(
-                runtime.shutdown_event
-            ),
-            name="nova-request-service",
-        )
+    request_service_task = asyncio.create_task(
+        request_service.run(
+            runtime.shutdown_event
+        ),
+        name="nova-request-service",
     )
     wake_detector = WakeWordDetector()
 
@@ -1110,75 +1011,40 @@ async def async_main() -> None:
 
     )
 
-    desktop_bridge_task = (
-        asyncio.create_task(
-            desktop_bridge.run(
-                runtime.shutdown_event
-            ),
-            name="nova-desktop-bridge",
-        )
-    )
-    plan_service = PlanService(
-        registry=registry,
-        runner=runner,
-    )
-    plan_handlers = {
-        "execute_plan": (
-            plan_service.execute_plan
+    desktop_bridge_task = asyncio.create_task(
+        desktop_bridge.run(
+            runtime.shutdown_event
         ),
-        "get_plan_status": (
-            plan_service.get_plan_status
-        ),
-        "cancel_plan": (
-            plan_service.cancel_plan
-        ),
-    }
-
-    for schema in planning_tools:
-        tool_name = schema["function"]["name"]
-
-        registry.register(
-            schema=schema,
-            handler=plan_handlers[tool_name],
-        )
-
-    agent = AgentService(
-        llm,
-        registry,
-        runner,
+        name="nova-desktop-bridge",
     )
-
-
+    logger.info(
+        (
+            "Runtime services started: "
+            "request_service=%s desktop_bridge=%s "
+            "wake_runtime=%s"
+        ),
+        not request_service_task.done(),
+        not desktop_bridge_task.done(),
+        not wake_runtime_task.done(),
+    )
     loop = asyncio.get_running_loop()
     hotkey_handles: list[Any] = []
 
     def schedule_toggle() -> None:
         async def toggle() -> None:
-            current_preferences = (
-                preferences.snapshot()
+            active, mode_snapshot = (
+                await mode_manager
+                .toggle_manual_voice()
             )
 
-            if (
-                current_preferences.input_mode
-                != InputMode.CONTINUOUS
-            ):
-                preferences.set_input_mode(
-                    InputMode.CONTINUOUS
-                )
-
-            if runtime.is_active:
-                await mode_manager.set_mode(
-                    InputMode.SLEEP
-                )
-                active = False
-            else:
-                await mode_manager.set_mode(
-                    InputMode.CONTINUOUS
-                )
-                active = True
-
-
-            await speech.interrupt()
+            logger.info(
+                (
+                    "Ctrl+Shift+Space: active=%s "
+                    "input_mode=%s"
+                ),
+                active,
+                mode_snapshot.input_mode.value,
+            )
 
             if active:
                 await asyncio.to_thread(
@@ -1211,6 +1077,9 @@ async def async_main() -> None:
             toggle_callback,
         )
     )
+    logger.info(
+        "Горячая клавиша Ctrl+Shift+Space зарегистрирована."
+    )
     hotkey_handles.append(
         keyboard.add_hotkey(
             "esc",
@@ -1223,7 +1092,9 @@ async def async_main() -> None:
             interrupt_callback,
         )
     )
-
+    logger.info(
+        "Все глобальные горячие клавиши зарегистрированы."
+    )
     await speech.start()
     await runtime.set_state(AssistantState.SLEEPING)
 
@@ -1256,14 +1127,19 @@ async def async_main() -> None:
 
     try:
         await speech.say(
-            "Нажмите контрол шифт спейс, чтобы активировать Нову.",
+            (
+                "Скажите Нова или нажмите "
+                "контрол шифт спейс."
+            ),
             priority=0,
         )
-        await voice_task
+
+        await runtime.shutdown_event.wait()
+
     finally:
         await runtime.request_shutdown()
         await input_coordinator.close()
-
+        wake_runtime.close()
         reminder_task.cancel()
         voice_task.cancel()
         request_service_task.cancel()
@@ -1280,7 +1156,6 @@ async def async_main() -> None:
 
 
         keyboard.unhook_all_hotkeys()
-        wake_runtime.close()
         await speech.close()
         await background_plan_manager.close()
         await browser_manager.close()
