@@ -110,6 +110,28 @@ def run_desktop(
                 "Приватный локальный",
                 "private_local",
             )
+            self.input_mode_combo = QComboBox()
+
+            self.input_mode_combo.addItem(
+                "Ввод: Wake word",
+                "wake_word",
+            )
+            self.input_mode_combo.addItem(
+                "Ввод: Непрерывный",
+                "continuous",
+            )
+            self.input_mode_combo.addItem(
+                "Ввод: Нажми и говори",
+                "push_to_talk",
+            )
+            self.input_mode_combo.addItem(
+                "Ввод: Только текст",
+                "text_only",
+            )
+            self.input_mode_combo.addItem(
+                "Ввод: Приватный",
+                "privacy",
+            )
 
             self.model_mode_combo = QComboBox()
             self.model_mode_combo.addItem(
@@ -144,6 +166,9 @@ def run_desktop(
                 self.model_mode_combo
             )
             controls.addStretch()
+            controls.addWidget(
+                self.input_mode_combo
+            )
 
             input_layout = QHBoxLayout()
 
@@ -272,6 +297,23 @@ def run_desktop(
                     "assistant",
                 )
             )
+            input_mode_value = str(
+                payload.get(
+                    "input_mode",
+                    "continuous",
+                )
+            )
+
+            input_mode_index = (
+                self.input_mode_combo.findData(
+                    input_mode_value
+                )
+            )
+
+            if input_mode_index >= 0:
+                self.input_mode_combo.setCurrentIndex(
+                    input_mode_index
+                )
 
             model_mode_value = str(
                 payload.get(

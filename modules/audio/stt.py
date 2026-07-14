@@ -681,6 +681,60 @@ class VoiceListener:
         )
 
         return result.text.strip()
+    def transcribe_file(
+        self,
+        wav_path: str | Path,
+    ) -> str:
+        """
+        Распознаёт уже существующий WAV-файл.
+
+        Используется WakeWordRuntime после локального обнаружения
+        слова «Нова».
+        """
+        resolved_path = Path(
+            wav_path
+        ).resolve()
+
+        if not resolved_path.is_file():
+            logger.error(
+                "STT-файл не найден: %s",
+                resolved_path,
+            )
+            return ""
+
+        text = self._transcribe(
+            resolved_path
+        )
+
+        if not text:
+            logger.warning(
+                "STT не вернул текст для %s.",
+                resolved_path,
+            )
+            return ""
+
+        text = normalize_voice_command(
+            text
+        )
+
+        normalized = (
+            text.lower()
+            .strip()
+            .rstrip(".!?")
+        )
+
+        if normalized in WHISPER_HALLUCINATIONS:
+            logger.info(
+                "Отсечена галлюцинация Whisper: %r",
+                text,
+            )
+            return ""
+
+        print(
+            f"[Вы сказали]: {text}"
+        )
+
+        return text
 
     def listen(
         self,

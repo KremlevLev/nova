@@ -222,8 +222,13 @@ def _extract_application_name(
             " ,.!?:;"
         )
 
-        if candidate:
+        if (
+            candidate
+            and candidate
+            not in INVALID_APPLICATION_TARGETS
+        ):
             return candidate
+
 
     return None
 

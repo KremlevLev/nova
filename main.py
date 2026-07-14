@@ -3,6 +3,12 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from modules.input_hub.wake_runtime import (
+    WakeWordRuntime,
+)
+from modules.input_hub.wake_word import (
+    WakeWordDetector,
+)
 from modules.application.preferences import (
     PreferencesManager,
 )
@@ -470,8 +476,18 @@ async def run_voice_loop(
     listener: VoiceListener,
     app_launcher: WindowsAppIndexer,
     windows_context: WindowsContext,
+    preferences: PreferencesManager,
 ) -> None:
     while not runtime.is_shutting_down:
+        current_mode = (
+            preferences.snapshot().input_mode
+        )
+
+        if current_mode not in {
+            InputMode.CONTINUOUS,
+        }:
+            await asyncio.sleep(0.2)
+            continue
         if not runtime.is_active:
             await runtime.wait_until_active()
 
@@ -1037,6 +1053,22 @@ async def async_main() -> None:
             name="nova-request-service",
         )
     )
+    wake_detector = WakeWordDetector()
+
+    wake_runtime = WakeWordRuntime(
+        detector=wake_detector,
+        listener=listener,
+        coordinator=input_coordinator,
+        preferences=preferences,
+        runtime=runtime,
+    )
+
+    wake_runtime_task = asyncio.create_task(
+        wake_runtime.run(
+            runtime.shutdown_event
+        ),
+        name="nova-wake-word-runtime",
+    )
 
     # =========================================================
     # DESKTOP BRIDGE
@@ -1107,6 +1139,18 @@ async def async_main() -> None:
 
     def schedule_toggle() -> None:
         async def toggle() -> None:
+            current_preferences = (
+                preferences.snapshot()
+            )
+
+            if (
+                current_preferences.input_mode
+                != InputMode.CONTINUOUS
+            ):
+                preferences.set_input_mode(
+                    InputMode.CONTINUOUS
+                )
+
             active = await runtime.toggle()
 
             await speech.interrupt()
@@ -1179,6 +1223,7 @@ async def async_main() -> None:
             listener,
             app_launcher,
             windows_context,
+            preferences,
         ),
         name="nova-voice-loop",
     )
@@ -1198,17 +1243,19 @@ async def async_main() -> None:
         voice_task.cancel()
         request_service_task.cancel()
         desktop_bridge_task.cancel()
-
+        wake_runtime_task.cancel()
         await asyncio.gather(
             reminder_task,
             voice_task,
             request_service_task,
+            wake_runtime_task,
             desktop_bridge_task,
             return_exceptions=True,
         )
 
-        keyboard.unhook_all_hotkeys()
 
+        keyboard.unhook_all_hotkeys()
+        wake_runtime.close()
         await speech.close()
         await background_plan_manager.close()
         await browser_manager.close()

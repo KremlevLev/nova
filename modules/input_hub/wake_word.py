@@ -1,0 +1,672 @@
+# modules/input_hub/wake_word.py
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import tempfile
+import threading
+import time
+import wave
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+from dotenv import load_dotenv
+import numpy as np
+import sounddevice as sd
+
+
+logger = logging.getLogger("WakeWord")
+load_dotenv()
+
+
+@dataclass(slots=True)
+class WakeWordConfig:
+    enabled: bool
+    wake_word: str
+    model_path: Path
+    model_configured: bool = False
+
+    sample_rate: int = 16_000
+    block_size: int = 2_048
+
+    silence_duration: float = 1.1
+    maximum_command_duration: float = 15.0
+    pre_roll_duration: float = 1.2
+
+    minimum_rms_threshold: float = 0.006
+    sensitivity: float = 0.55
+
+    input_device: int | str | None = None
+
+    @classmethod
+    def from_environment(
+        cls,
+    ) -> "WakeWordConfig":
+        enabled = os.getenv(
+            "NOVA_WAKE_WORD_ENABLED",
+            "false",
+        ).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        input_device_raw = os.getenv(
+            "NOVA_INPUT_DEVICE",
+            "",
+        ).strip()
+
+        input_device: int | str | None
+
+        if not input_device_raw:
+            input_device = None
+        elif input_device_raw.isdigit():
+            input_device = int(
+                input_device_raw
+            )
+        else:
+            input_device = input_device_raw
+        model_path_raw = os.getenv(
+            "NOVA_VOSK_MODEL",
+            "",
+        ).strip()
+
+        return cls(
+            enabled=enabled,
+            wake_word=os.getenv(
+                "NOVA_WAKE_WORD",
+                "нова",
+            ).strip().lower(),
+            model_path=(
+                Path(model_path_raw)
+                if model_path_raw
+                else Path(
+                    "__nova_vosk_model_not_configured__"
+                )
+            ),
+            model_configured=bool(
+                model_path_raw
+            ),
+            maximum_command_duration=float(
+                os.getenv(
+                    "NOVA_WAKE_COMMAND_TIMEOUT",
+                    "15",
+                )
+            ),
+            sensitivity=float(
+                os.getenv(
+                    "NOVA_WAKE_WORD_SENSITIVITY",
+                    "0.55",
+                )
+            ),
+            input_device=input_device,
+        )
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.enabled
+            and bool(self.wake_word)
+            and self.model_configured
+            and self.model_path.is_dir()
+        )
+
+
+
+@dataclass(slots=True)
+class WakeCapture:
+    detected: bool
+    audio_path: Path | None = None
+    detected_text: str = ""
+    error: str = ""
+
+    @property
+    def success(self) -> bool:
+        return (
+            self.detected
+            and self.audio_path is not None
+        )
+
+
+WAKE_PREFIX_PATTERNS = (
+    r"^\s*нова[\s,;:!?.-]*",
+    r"^\s*эй[\s,;:!?.-]+нова[\s,;:!?.-]*",
+    r"^\s*слушай[\s,;:!?.-]+нова[\s,;:!?.-]*",
+)
+
+
+def normalize_wake_text(
+    text: str,
+) -> str:
+    normalized = str(text).lower()
+    normalized = normalized.replace(
+        "ё",
+        "е",
+    )
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        normalized,
+    )
+
+    return normalized.strip()
+
+
+def contains_wake_word(
+    text: str,
+    wake_word: str = "нова",
+) -> bool:
+    normalized = normalize_wake_text(text)
+    normalized_wake = normalize_wake_text(
+        wake_word
+    )
+
+    if not normalized_wake:
+        return False
+
+    return bool(
+        re.search(
+            rf"\b{re.escape(normalized_wake)}\b",
+            normalized,
+        )
+    )
+
+
+def strip_wake_prefix(
+    text: str,
+) -> str:
+    """
+    Удаляет wake prefix из окончательной транскрипции.
+
+    Примеры:
+        «Нова, открой блокнот» -> «открой блокнот»
+        «Эй Нова, скажи время» -> «скажи время»
+        «Нова» -> ""
+    """
+    clean = str(text).strip()
+
+    for pattern in WAKE_PREFIX_PATTERNS:
+        updated = re.sub(
+            pattern,
+            "",
+            clean,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+        if updated != clean:
+            return updated.strip(
+                " \t\r\n,;:!?.-"
+            )
+
+    return clean.strip()
+
+
+def _rms_from_bytes(
+    raw_audio: bytes,
+) -> float:
+    if not raw_audio:
+        return 0.0
+
+    samples = np.frombuffer(
+        raw_audio,
+        dtype=np.int16,
+    ).astype(np.float32)
+
+    if samples.size == 0:
+        return 0.0
+
+    samples /= 32768.0
+
+    return float(
+        np.sqrt(
+            np.mean(
+                np.square(samples)
+            )
+        )
+    )
+
+
+class WakeWordDetector:
+    """
+    Локальный wake-word detector на Vosk.
+
+    Алгоритм:
+    1. Постоянно читает небольшие PCM-блоки.
+    2. Vosk проверяет partial/final transcription.
+    3. После обнаружения слова «Нова» продолжает записывать.
+    4. После тишины сохраняет всю фразу в WAV.
+    5. Основной STT повторно распознаёт WAV с высоким качеством.
+    """
+
+    def __init__(
+        self,
+        config: WakeWordConfig | None = None,
+    ) -> None:
+        self.config = (
+            config
+            or WakeWordConfig.from_environment()
+        )
+
+        self._model = None
+        self._model_lock = threading.RLock()
+
+        self._stop_event = threading.Event()
+
+    @property
+    def available(self) -> bool:
+        return self.config.available
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def reset(self) -> None:
+        self._stop_event.clear()
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+
+        with self._model_lock:
+            if self._model is not None:
+                return self._model
+
+            try:
+                from vosk import Model
+            except ImportError as exc:
+                raise RuntimeError(
+                    (
+                        "Vosk не установлен. Выполните: "
+                        "py -m pip install vosk"
+                    )
+                ) from exc
+
+            if not self.config.model_path.is_dir():
+                raise RuntimeError(
+                    (
+                        "Vosk-модель не найдена: "
+                        f"{self.config.model_path}"
+                    )
+                )
+
+            logger.info(
+                "Загрузка Vosk wake-word модели: %s",
+                self.config.model_path,
+            )
+
+            self._model = Model(
+                str(self.config.model_path)
+            )
+
+            logger.info(
+                "Vosk wake-word модель загружена."
+            )
+
+            return self._model
+
+    @staticmethod
+    def _extract_vosk_text(
+        payload: str,
+    ) -> str:
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return ""
+
+        return str(
+            parsed.get("text")
+            or parsed.get("partial")
+            or ""
+        ).strip()
+
+    def wait_for_command(
+        self,
+        should_abort: Callable[
+            [],
+            bool,
+        ] | None = None,
+    ) -> WakeCapture:
+        if not self.available:
+            return WakeCapture(
+                detected=False,
+                error=(
+                    "Wake word отключён или "
+                    "Vosk-модель не настроена."
+                ),
+            )
+
+        self.reset()
+
+        try:
+            from vosk import (
+                KaldiRecognizer,
+                SetLogLevel,
+            )
+
+            SetLogLevel(-1)
+            model = self._load_model()
+
+        except Exception as exc:
+            logger.exception(
+                "Не удалось подготовить wake word."
+            )
+
+            return WakeCapture(
+                detected=False,
+                error=str(exc),
+            )
+
+        recognizer = KaldiRecognizer(
+            model,
+            self.config.sample_rate,
+        )
+
+        stream_arguments = {
+            "samplerate": (
+                self.config.sample_rate
+            ),
+            "channels": 1,
+            "blocksize": (
+                self.config.block_size
+            ),
+            "dtype": "int16",
+        }
+
+        if self.config.input_device is not None:
+            stream_arguments["device"] = (
+                self.config.input_device
+            )
+
+        pre_roll_blocks = max(
+            1,
+            int(
+                self.config.pre_roll_duration
+                * self.config.sample_rate
+                / self.config.block_size
+            ),
+        )
+
+        silence_limit_blocks = max(
+            1,
+            int(
+                self.config.silence_duration
+                * self.config.sample_rate
+                / self.config.block_size
+            ),
+        )
+
+        maximum_capture_blocks = max(
+            1,
+            int(
+                self.config.maximum_command_duration
+                * self.config.sample_rate
+                / self.config.block_size
+            ),
+        )
+
+        pre_roll: deque[bytes] = deque(
+            maxlen=pre_roll_blocks
+        )
+
+        captured_audio: list[bytes] = []
+
+        wake_detected = False
+        wake_text = ""
+
+        silence_blocks = 0
+        post_wake_blocks = 0
+
+        noise_floor = (
+            self.config.minimum_rms_threshold
+        )
+        threshold = max(
+            self.config.minimum_rms_threshold,
+            noise_floor * 1.6,
+        )
+
+        try:
+            with sd.RawInputStream(
+                **stream_arguments
+            ) as stream:
+                logger.info(
+                    (
+                        "Wake word активен. "
+                        "Ожидаю фразу '%s'."
+                    ),
+                    self.config.wake_word,
+                )
+
+                while True:
+                    if self._stop_event.is_set():
+                        return WakeCapture(
+                            detected=False,
+                            error="Wake detector остановлен.",
+                        )
+
+                    if (
+                        should_abort is not None
+                        and should_abort()
+                    ):
+                        return WakeCapture(
+                            detected=False,
+                            error="Wake detector отменён.",
+                        )
+
+                    audio_block, overflowed = (
+                        stream.read(
+                            self.config.block_size
+                        )
+                    )
+
+                    raw_bytes = bytes(audio_block)
+
+                    if overflowed:
+                        logger.debug(
+                            "Wake-word audio overflow."
+                        )
+
+                    rms = _rms_from_bytes(
+                        raw_bytes
+                    )
+
+                    if not wake_detected:
+                        pre_roll.append(
+                            raw_bytes
+                        )
+
+                        noise_floor = (
+                            noise_floor * 0.995
+                            + rms * 0.005
+                        )
+
+                        threshold = max(
+                            (
+                                self.config
+                                .minimum_rms_threshold
+                            ),
+                            noise_floor * (
+                                1.2
+                                + self.config.sensitivity
+                            ),
+                        )
+
+                    accepted = (
+                        recognizer.AcceptWaveform(
+                            raw_bytes
+                        )
+                    )
+
+                    if accepted:
+                        recognized_text = (
+                            self._extract_vosk_text(
+                                recognizer.Result()
+                            )
+                        )
+                    else:
+                        recognized_text = (
+                            self._extract_vosk_text(
+                                recognizer.PartialResult()
+                            )
+                        )
+
+                    if (
+                        not wake_detected
+                        and contains_wake_word(
+                            recognized_text,
+                            self.config.wake_word,
+                        )
+                    ):
+                        wake_detected = True
+                        wake_text = recognized_text
+
+                        captured_audio.extend(
+                            list(pre_roll)
+                        )
+
+                        logger.info(
+                            (
+                                "Wake word обнаружен: "
+                                "text=%r rms=%.4f"
+                            ),
+                            recognized_text,
+                            rms,
+                        )
+
+                    if wake_detected:
+                        captured_audio.append(
+                            raw_bytes
+                        )
+
+                        post_wake_blocks += 1
+
+                        continuation_threshold = max(
+                            (
+                                self.config
+                                .minimum_rms_threshold
+                            ),
+                            threshold * 0.65,
+                        )
+
+                        if rms > continuation_threshold:
+                            silence_blocks = 0
+                        else:
+                            silence_blocks += 1
+
+                        # Не завершаем запись сразу после wake word:
+                        # даём пользователю произнести продолжение.
+                        minimum_post_wake_blocks = max(
+                            2,
+                            int(
+                                0.5
+                                * self.config.sample_rate
+                                / self.config.block_size
+                            ),
+                        )
+
+                        if (
+                            post_wake_blocks
+                            >= minimum_post_wake_blocks
+                            and silence_blocks
+                            >= silence_limit_blocks
+                        ):
+                            break
+
+                        if (
+                            len(captured_audio)
+                            >= maximum_capture_blocks
+                        ):
+                            logger.info(
+                                "Достигнут лимит wake-команды."
+                            )
+                            break
+
+        except sd.PortAudioError as exc:
+            logger.error(
+                "Ошибка микрофона wake word: %s",
+                exc,
+            )
+
+            return WakeCapture(
+                detected=False,
+                error=str(exc),
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Ошибка wake-word цикла."
+            )
+
+            return WakeCapture(
+                detected=False,
+                error=str(exc),
+            )
+
+        if not wake_detected:
+            return WakeCapture(
+                detected=False,
+                error="Wake word не обнаружен.",
+            )
+
+        if not captured_audio:
+            return WakeCapture(
+                detected=False,
+                error="Wake audio пуст.",
+            )
+
+        temp_directory = Path(
+            "data/temp"
+        )
+        temp_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        file_descriptor, raw_path = (
+            tempfile.mkstemp(
+                prefix="nova_wake_",
+                suffix=".wav",
+                dir=str(temp_directory),
+            )
+        )
+
+        os.close(file_descriptor)
+
+        audio_path = Path(raw_path)
+
+        try:
+            with wave.open(
+                str(audio_path),
+                "wb",
+            ) as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(
+                    self.config.sample_rate
+                )
+
+                wav_file.writeframes(
+                    b"".join(captured_audio)
+                )
+
+        except Exception as exc:
+            audio_path.unlink(
+                missing_ok=True
+            )
+
+            return WakeCapture(
+                detected=False,
+                error=(
+                    "Не удалось сохранить wake audio: "
+                    f"{exc}"
+                ),
+            )
+
+        return WakeCapture(
+            detected=True,
+            audio_path=audio_path,
+            detected_text=wake_text,
+        )

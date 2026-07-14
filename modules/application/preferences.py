@@ -1,6 +1,7 @@
 # modules/application/preferences.py
 from __future__ import annotations
-
+import os
+from pathlib import Path
 import logging
 import threading
 from dataclasses import dataclass
@@ -52,7 +53,32 @@ class PreferencesManager:
     def __init__(self) -> None:
         self._lock = threading.RLock()
 
-        self._input_mode = InputMode.WAKE_WORD
+        wake_enabled = os.getenv(
+            "NOVA_WAKE_WORD_ENABLED",
+            "false",
+        ).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        wake_model = Path(
+            os.getenv(
+                "NOVA_VOSK_MODEL",
+                "",
+            )
+        )
+
+        self._input_mode = (
+            InputMode.WAKE_WORD
+            if (
+                wake_enabled
+                and wake_model.is_dir()
+            )
+            else InputMode.CONTINUOUS
+        )
+
         self._assistant_profile = (
             AssistantProfile.ASSISTANT
         )

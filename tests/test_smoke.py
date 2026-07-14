@@ -421,3 +421,15 @@ def test_request_runtime_import() -> None:
     assert RequestDispatcher is not None
     assert RequestService is not None
     assert DirectRequestExecutor is not None
+def test_wake_word_import() -> None:
+    from modules.input_hub.wake_runtime import (
+        WakeWordRuntime,
+    )
+    from modules.input_hub.wake_word import (
+        WakeWordDetector,
+        strip_wake_prefix,
+    )
+
+    assert WakeWordRuntime is not None
+    assert WakeWordDetector is not None
+    assert strip_wake_prefix is not None

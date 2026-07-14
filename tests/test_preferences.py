@@ -16,10 +16,11 @@ def test_default_preferences() -> None:
 
     snapshot = manager.snapshot()
 
-    assert (
-        snapshot.input_mode
-        == InputMode.WAKE_WORD
-    )
+    assert snapshot.input_mode in {
+        InputMode.WAKE_WORD,
+        InputMode.CONTINUOUS,
+    }
+
     assert (
         snapshot.assistant_profile
         == AssistantProfile.ASSISTANT
@@ -87,4 +88,28 @@ def test_pinned_model() -> None:
     assert (
         snapshot.selected_model
         == "test/model"
+    )
+def test_wake_word_default_when_configured(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    model_directory = (
+        tmp_path / "vosk-model"
+    )
+    model_directory.mkdir()
+
+    monkeypatch.setenv(
+        "NOVA_WAKE_WORD_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "NOVA_VOSK_MODEL",
+        str(model_directory),
+    )
+
+    manager = PreferencesManager()
+
+    assert (
+        manager.snapshot().input_mode
+        == InputMode.WAKE_WORD
     )

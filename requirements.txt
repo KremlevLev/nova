@@ -14,3 +14,4 @@ torch>=2.11.0
 scipy
 playwright
 PySide6
+vosk

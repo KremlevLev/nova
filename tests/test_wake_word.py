@@ -1,0 +1,113 @@
+# tests/test_wake_word.py
+from __future__ import annotations
+
+from pathlib import Path
+
+from modules.input_hub.wake_word import (
+    WakeWordConfig,
+    WakeWordDetector,
+    contains_wake_word,
+    normalize_wake_text,
+    strip_wake_prefix,
+)
+
+
+def test_normalize_wake_text() -> None:
+    assert (
+        normalize_wake_text(
+            "  НОВА,   Открой  "
+        )
+        == "нова, открой"
+    )
+
+
+def test_contains_wake_word() -> None:
+    assert contains_wake_word(
+        "Нова открой блокнот"
+    )
+
+    assert contains_wake_word(
+        "Эй, Нова!"
+    )
+
+
+def test_does_not_match_part_of_word() -> None:
+    assert not contains_wake_word(
+        "инновация"
+    )
+
+
+def test_strip_simple_wake_prefix() -> None:
+    assert (
+        strip_wake_prefix(
+            "Нова, открой блокнот"
+        )
+        == "открой блокнот"
+    )
+
+
+def test_strip_hey_nova_prefix() -> None:
+    assert (
+        strip_wake_prefix(
+            "Эй Нова, скажи время"
+        )
+        == "скажи время"
+    )
+
+
+def test_strip_listen_nova_prefix() -> None:
+    assert (
+        strip_wake_prefix(
+            "Слушай, Нова, открой браузер"
+        )
+        == "открой браузер"
+    )
+
+
+def test_wake_only_returns_empty_command() -> None:
+    assert strip_wake_prefix(
+        "Нова"
+    ) == ""
+
+
+def test_text_without_wake_prefix_is_unchanged() -> None:
+    assert (
+        strip_wake_prefix(
+            "Открой блокнот"
+        )
+        == "Открой блокнот"
+    )
+
+
+def test_detector_unavailable_without_model() -> None:
+    config = WakeWordConfig(
+        enabled=True,
+        wake_word="нова",
+        model_path=Path(
+            "missing-vosk-model"
+        ),
+        model_configured=True,
+    )
+
+    detector = WakeWordDetector(config)
+
+    assert not detector.available
+
+def test_detector_available_with_model_directory(
+    tmp_path,
+) -> None:
+    model_directory = (
+        tmp_path / "vosk-model"
+    )
+    model_directory.mkdir()
+
+    config = WakeWordConfig(
+        enabled=True,
+        wake_word="нова",
+        model_path=model_directory,
+        model_configured=True,
+    )
+
+    detector = WakeWordDetector(config)
+
+    assert detector.available
