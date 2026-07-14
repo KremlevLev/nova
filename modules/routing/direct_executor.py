@@ -17,6 +17,9 @@ from modules.domain.results import (
     AssistantResponse,
     ToolResult,
 )
+from modules.application.interaction_modes import (
+    InteractionModeManager,
+)
 from modules.input_hub.models import (
     AssistantProfile,
     InputMode,
@@ -52,11 +55,16 @@ class DirectRequestExecutor:
         *,
         runner: ToolRunner,
         preferences: PreferencesManager,
+        mode_manager: (
+            InteractionModeManager | None
+        ) = None,
         session_id: str = "nova-session",
     ) -> None:
         self.runner = runner
         self.preferences = preferences
+        self.mode_manager = mode_manager
         self.session_id = session_id
+
 
     async def execute(
         self,
@@ -75,9 +83,10 @@ class DirectRequestExecutor:
             decision.intent
             == IntentKind.MODE_SELECTION
         ):
-            return self._apply_mode_selection(
+            return await self._apply_mode_selection(
                 request.text
             )
+
 
         tool_name = self._resolve_tool_name(
             decision
@@ -545,7 +554,7 @@ class DirectRequestExecutor:
             },
         )
 
-    def _apply_mode_selection(
+    async def _apply_mode_selection(
         self,
         text: str,
     ) -> AssistantResponse:
@@ -660,11 +669,19 @@ class DirectRequestExecutor:
                 )
             )
 
-        snapshot = (
-            self.preferences.set_input_mode(
-                mode
+        if self.mode_manager is not None:
+            snapshot = (
+                await self.mode_manager.set_mode(
+                    mode
+                )
             )
-        )
+        else:
+            snapshot = (
+                self.preferences.set_input_mode(
+                    mode
+                )
+            )
+
 
         return AssistantResponse(
             display_text=message,

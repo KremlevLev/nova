@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+from modules.application.interaction_modes import (
+    InteractionModeManager,
+)
+from modules.domain.state import RuntimeState
 
 from modules.application.preferences import (
     PreferencesManager,
@@ -318,5 +322,46 @@ def test_privacy_mode_without_model() -> None:
         )
         assert not snapshot.cloud_enabled
         assert not snapshot.history_enabled
+
+    asyncio.run(scenario())
+def test_mode_manager_is_used() -> None:
+    async def scenario() -> None:
+        (
+            executor,
+            preferences,
+            _,
+        ) = create_executor()
+
+        runtime = RuntimeState()
+
+        mode_manager = (
+            InteractionModeManager(
+                preferences=preferences,
+                runtime=runtime,
+            )
+        )
+
+        executor.mode_manager = mode_manager
+
+        request = UserRequest.from_text(
+            "Включи непрерывный режим"
+        )
+
+        decision = (
+            DeterministicIntentRouter()
+            .route(request)
+        )
+
+        response = await executor.execute(
+            request,
+            decision,
+        )
+
+        assert response.success
+        assert runtime.is_active
+        assert (
+            preferences.snapshot().input_mode
+            == InputMode.CONTINUOUS
+        )
 
     asyncio.run(scenario())

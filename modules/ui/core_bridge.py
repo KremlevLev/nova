@@ -41,6 +41,7 @@ class CoreDesktopBridge:
         desktop: DesktopService,
         process_manager,
         memory_store,
+        mode_manager=None,
         permission_manager: PermissionManager,
         llm,
         runtime,
@@ -62,6 +63,7 @@ class CoreDesktopBridge:
         )
         self.llm = llm
         self.runtime = runtime
+        self.mode_manager = mode_manager
 
         self.input_coordinator = (
             input_coordinator
@@ -180,7 +182,6 @@ class CoreDesktopBridge:
         valid, error = validate_command(
             command
         )
-
         command_id = str(
             command.get(
                 "command_id",
@@ -201,6 +202,50 @@ class CoreDesktopBridge:
             "payload",
             {},
         )
+        if action == "set_input_mode":
+            if self.mode_manager is None:
+                self._publish_command_result(
+                    command_id,
+                    success=False,
+                    message=(
+                        "Менеджер режимов "
+                        "не подключён."
+                    ),
+                )
+                return
+            mode_name = str(
+                payload.get(
+                    "input_mode",
+                    "",
+                )
+            )
+            try:
+                snapshot = (
+                    await self.mode_manager
+                    .set_mode_from_string(
+                        mode_name
+                    )
+                )
+            except ValueError as exc:
+                self._publish_command_result(
+                    command_id,
+                    success=False,
+                    message=str(exc),
+                )
+                return
+            self.desktop.publish(
+                "preferences",
+                snapshot.to_dict(),
+            )
+            self._publish_command_result(
+                command_id,
+                success=True,
+                message=(
+                    f"Режим переключён: "
+                    f"{snapshot.input_mode.value}."
+                ),
+            )
+            return
 
         try:
             if action == "refresh":

@@ -75,6 +75,25 @@ def run_desktop(
             self.timer.start(100)
 
             self._send_command("refresh")
+        def _input_mode_changed(
+            self,
+            _index: int,
+        ) -> None:
+            input_mode = (
+                self.input_mode_combo
+                .currentData()
+            )
+
+            if not input_mode:
+                return
+
+            self._send_command(
+                "set_input_mode",
+                {
+                    "input_mode": input_mode,
+                },
+            )
+
         def _create_chat_tab(
             self,
         ) -> QWidget:
@@ -111,6 +130,9 @@ def run_desktop(
                 "private_local",
             )
             self.input_mode_combo = QComboBox()
+            self.input_mode_combo.currentIndexChanged.connect(
+                self._input_mode_changed
+            )
 
             self.input_mode_combo.addItem(
                 "Ввод: Wake word",
@@ -310,10 +332,16 @@ def run_desktop(
                 )
             )
 
-            if input_mode_index >= 0:
-                self.input_mode_combo.setCurrentIndex(
-                    input_mode_index
-                )
+            self.input_mode_combo.blockSignals(
+                True
+            )
+            self.input_mode_combo.setCurrentIndex(
+                input_mode_index
+            )
+            self.input_mode_combo.blockSignals(
+                False
+            )
+
 
             model_mode_value = str(
                 payload.get(

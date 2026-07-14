@@ -12,6 +12,9 @@ from modules.input_hub.wake_word import (
 from modules.application.preferences import (
     PreferencesManager,
 )
+from modules.application.interaction_modes import (
+    InteractionModeManager,
+)
 from modules.application.request_dispatcher import (
     RequestDispatcher,
 )
@@ -830,6 +833,11 @@ async def async_main() -> None:
         runner,
     )
     preferences = PreferencesManager()
+    mode_manager = InteractionModeManager(
+        preferences=preferences,
+        runtime=runtime,
+        speech=speech,
+    )
 
     input_coordinator = InputCoordinator()
 
@@ -837,6 +845,8 @@ async def async_main() -> None:
         runner=runner,
         preferences=preferences,
         session_id=agent.session_id,
+        mode_manager=mode_manager,
+
     )
 
     request_dispatcher = RequestDispatcher(
@@ -1062,6 +1072,9 @@ async def async_main() -> None:
         preferences=preferences,
         runtime=runtime,
     )
+    mode_manager.attach_wake_runtime(
+        wake_runtime
+    )
 
     wake_runtime_task = asyncio.create_task(
         wake_runtime.run(
@@ -1093,6 +1106,8 @@ async def async_main() -> None:
         cancel_current_request=(
             request_service.cancel_current
         ),
+        mode_manager=mode_manager,
+
     )
 
     desktop_bridge_task = (
@@ -1151,7 +1166,17 @@ async def async_main() -> None:
                     InputMode.CONTINUOUS
                 )
 
-            active = await runtime.toggle()
+            if runtime.is_active:
+                await mode_manager.set_mode(
+                    InputMode.SLEEP
+                )
+                active = False
+            else:
+                await mode_manager.set_mode(
+                    InputMode.CONTINUOUS
+                )
+                active = True
+
 
             await speech.interrupt()
 

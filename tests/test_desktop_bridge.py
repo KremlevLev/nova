@@ -322,3 +322,59 @@ def test_submit_user_request_command() -> None:
         )
 
     asyncio.run(scenario())
+class FakeModeManager:
+    def __init__(self) -> None:
+        self.modes = []
+
+    async def set_mode_from_string(
+        self,
+        mode_name,
+    ):
+        from modules.application.preferences import (
+            PreferencesManager,
+        )
+        from modules.input_hub.models import (
+            InputMode,
+        )
+
+        self.modes.append(mode_name)
+
+        preferences = PreferencesManager()
+
+        return preferences.set_input_mode(
+            InputMode(mode_name)
+        )
+def test_set_input_mode_command() -> None:
+    async def scenario() -> None:
+        (
+            bridge,
+            desktop,
+            _,
+            _,
+        ) = create_bridge()
+
+        mode_manager = FakeModeManager()
+        bridge.mode_manager = mode_manager
+
+        command = make_command(
+            "set_input_mode",
+            {
+                "input_mode": "text_only",
+            },
+        )
+
+        await bridge.handle_command(
+            command
+        )
+
+        assert mode_manager.modes == [
+            "text_only"
+        ]
+
+        assert any(
+            event["event_type"]
+            == "preferences"
+            for event in desktop.events
+        )
+
+    asyncio.run(scenario())
