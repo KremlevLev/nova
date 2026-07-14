@@ -94,6 +94,10 @@ RISK_BY_TOOL: dict[str, RiskLevel] = {
     "execute_plan": RiskLevel.EXECUTE,
     "get_plan_status": RiskLevel.READ_ONLY,
     "cancel_plan": RiskLevel.LOW,
+    "start_background_plan": RiskLevel.EXECUTE,
+    "get_background_plan_status": RiskLevel.READ_ONLY,
+    "list_background_plans": RiskLevel.READ_ONLY,
+    "cancel_background_plan": RiskLevel.LOW,
 
 }
 
@@ -151,6 +155,10 @@ CATEGORY_BY_TOOL: dict[str, ToolCategory] = {
     "execute_plan": ToolCategory.DEVELOPMENT,
     "get_plan_status": ToolCategory.DEVELOPMENT,
     "cancel_plan": ToolCategory.DEVELOPMENT,
+    "start_background_plan": ToolCategory.DEVELOPMENT,
+    "get_background_plan_status": ToolCategory.DEVELOPMENT,
+    "list_background_plans": ToolCategory.DEVELOPMENT,
+    "cancel_background_plan": ToolCategory.DEVELOPMENT,
 
 }
 
@@ -168,6 +176,8 @@ IDEMPOTENT_TOOLS = {
     "browser_screenshot",
     "browser_status",
     "get_plan_status",
+    "get_background_plan_status",
+    "list_background_plans",
 
 }
 

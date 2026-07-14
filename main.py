@@ -3,6 +3,15 @@ from __future__ import annotations
 from modules.windows.process_manager import (
     ProcessManager
 )
+from modules.tools.registry import (
+    ALL_TOOLS,
+    planning_tools,
+    background_plan_tools,
+)
+
+from modules.agent.background_plans import (
+    BackgroundPlanManager,
+)
 from modules.storage.artifacts import (
     ArtifactStore,
 )
@@ -632,12 +641,30 @@ async def async_main() -> None:
         for tool in planning_tools
     }
 
+    deferred_tool_names = {
+    tool["function"]["name"]
+    for tool in (
+        planning_tools
+        + background_plan_tools
+    )
+}
+
     base_tool_schemas = [
-        tool
-        for tool in ALL_TOOLS
-        if tool["function"]["name"]
-        not in planning_tool_names
-    ]
+    tool
+    for tool in ALL_TOOLS
+    if tool["function"]["name"]
+    not in deferred_tool_names
+]
+    for schema in background_plan_tools:
+        tool_name = schema["function"]["name"]
+
+        registry.register(
+        schema=schema,
+        handler=background_plan_handlers[
+            tool_name
+        ],
+    )
+
 
     registry = ToolRegistry.from_legacy(
         base_tool_schemas,
@@ -650,6 +677,11 @@ async def async_main() -> None:
         registry=registry,
         runner=runner,
     )
+    background_plan_manager = (
+    BackgroundPlanManager(
+        plan_service
+    )
+)
 
     plan_handlers = {
         "execute_plan": (
@@ -662,6 +694,20 @@ async def async_main() -> None:
             plan_service.cancel_plan
         ),
     }
+    background_plan_handlers = {
+    "start_background_plan": (
+        background_plan_manager.start_plan
+    ),
+    "get_background_plan_status": (
+        background_plan_manager.get_status
+    ),
+    "list_background_plans": (
+        background_plan_manager.list_plans
+    ),
+    "cancel_background_plan": (
+        background_plan_manager.cancel_plan
+    ),
+}
 
     for schema in planning_tools:
         tool_name = schema["function"]["name"]

@@ -1305,3 +1305,127 @@ planning_tools = [
 ]
 
 ALL_TOOLS.extend(planning_tools)
+background_plan_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "start_background_plan",
+            "description": (
+                "Запускает валидированный многошаговый план "
+                "в фоне и немедленно возвращает его идентификатор."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                    },
+                    "steps": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step_id": {
+                                    "type": "string",
+                                },
+                                "tool_name": {
+                                    "type": "string",
+                                },
+                                "arguments": {
+                                    "type": "object",
+                                    "properties": {},
+                                },
+                                "depends_on": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                    },
+                                },
+                                "description": {
+                                    "type": "string",
+                                },
+                                "critical": {
+                                    "type": "boolean",
+                                },
+                            },
+                            "required": [
+                                "step_id",
+                                "tool_name",
+                                "arguments",
+                            ],
+                        },
+                    },
+                    "session_id": {
+                        "type": "string",
+                    },
+                    "turn_id": {
+                        "type": "string",
+                    },
+                },
+                "required": [
+                    "goal",
+                    "steps",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_background_plan_status",
+            "description": (
+                "Возвращает состояние фонового плана."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "background_id": {
+                        "type": "string",
+                    },
+                },
+                "required": ["background_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_background_plans",
+            "description": (
+                "Возвращает список фоновых планов."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_background_plan",
+            "description": (
+                "Отменяет активный фоновый план."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "background_id": {
+                        "type": "string",
+                    },
+                },
+                "required": ["background_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+ALL_TOOLS.extend(background_plan_tools)

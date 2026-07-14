@@ -9,11 +9,13 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-
+from modules.local.inference import (
+    LocalSTTFallback,
+)
 import numpy as np
 import requests
 import sounddevice as sd
-
+import asyncio
 from core.config import GROQ_API_KEYS
 
 
@@ -143,6 +145,7 @@ class VoiceListener:
                 "Groq API-ключи отсутствуют. "
                 "Запись будет работать, но транскрипция недоступна."
             )
+        self.local_stt = LocalSTTFallback()
 
         self._log_audio_device()
 
@@ -563,11 +566,15 @@ class VoiceListener:
         wav_path: Path,
     ) -> str:
         if not GROQ_API_KEYS:
-            logger.error(
-                "Транскрипция невозможна: "
-                "GROQ_API_KEYS пуст."
-            )
-            return ""
+            logger.warning(
+            "Облачный STT недоступен. "
+            "Пробую локальный fallback."
+        )
+
+        return self._transcribe_local(
+            wav_path
+        )
+
 
         now = time.monotonic()
         attempted_keys = 0
@@ -633,6 +640,47 @@ class VoiceListener:
             )
 
         return ""
+    def _transcribe_local(
+        self,
+        wav_path: Path,
+    ) -> str:
+        """
+        Синхронный bridge для локального async STT.
+
+        VoiceListener.listen() уже выполняется через asyncio.to_thread,
+        поэтому внутри этого рабочего потока можно создать отдельный
+        event loop через asyncio.run().
+        """
+        if not self.local_stt.available:
+            logger.info(
+                "Локальный STT fallback не настроен."
+            )
+            return ""
+
+        try:
+            result = asyncio.run(
+                self.local_stt.transcribe(
+                    wav_path
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Ошибка локального STT fallback."
+            )
+            return ""
+
+        if not result.success:
+            logger.error(
+                "Локальный STT завершился ошибкой: %s",
+                result.error,
+            )
+            return ""
+
+        logger.info(
+            "Транскрипция получена через локальный STT."
+        )
+
+        return result.text.strip()
 
     def listen(
         self,

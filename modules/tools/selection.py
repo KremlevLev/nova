@@ -133,6 +133,12 @@ ARTIFACT_TOOLS = {
     "read_artifact",
     "delete_artifact",
 }
+BACKGROUND_PLAN_TOOLS = {
+    "start_background_plan",
+    "get_background_plan_status",
+    "list_background_plans",
+    "cancel_background_plan",
+}
 
 
 def contains_any(text: str, markers: tuple[str, ...]) -> bool:

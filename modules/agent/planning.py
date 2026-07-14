@@ -1,6 +1,9 @@
 # modules/agent/planning.py
 from __future__ import annotations
-
+from modules.agent.recovery import (
+    RecoveryAction,
+    RecoveryEngine,
+)
 import asyncio
 import logging
 import time
@@ -323,6 +326,7 @@ class PlanExecutor:
         self.registry = registry
         self.runner = runner
         self.budget = budget or PlanBudget()
+        self.recovery_engine = RecoveryEngine()
 
     @staticmethod
     def _build_tool_call(
@@ -499,10 +503,46 @@ class PlanExecutor:
                     step.tool_name,
                 )
 
-                result = await self.runner.execute(
-                    tool_call,
-                    context=context,
+                async def execute_attempt(
+                    attempt: int,
+                ) -> ToolResult:
+                    context.metadata[
+                        "recovery_attempt"
+                    ] = attempt
+
+                    return await self.runner.execute(
+                        tool_call,
+                        context=context,
+                    )
+
+                result, recovery_decision = (
+                    await self.recovery_engine.execute_with_recovery(
+                        execute_attempt,
+                        operation_name=step.tool_name,
+                        max_attempts=3,
+                        has_fallback=False,
+                        has_rollback=(
+                            bool(
+                                self.registry.get(
+                                    step.tool_name
+                                ).supports_rollback
+                            )
+                            if self.registry.get(
+                                step.tool_name
+                            )
+                            is not None
+                            else False
+                        ),
+                        cancellation_event=(
+                            cancellation_event
+                        ),
+                    )
                 )
+
+                context.metadata[
+                    "recovery_action"
+                ] = recovery_decision.action.value
+
 
                 step.result = result
 
