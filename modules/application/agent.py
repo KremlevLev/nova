@@ -213,7 +213,6 @@ class AgentService:
         )
 
 
-
     async def _request_model(
         self,
         *,
@@ -515,6 +514,13 @@ class AgentService:
         use_tools: bool = True,
         has_image: bool = False,
     ) -> AssistantResponse:
+        """
+        Однотуровое выполнение:
+        1. Роутинг через IntentRouter
+        2. Один вызов модели
+        3. Выполнение всех tool calls
+        4. Детерминированный отчёт
+        """
         turn_id = (
             f"turn_{uuid.uuid4().hex}"
         )
@@ -664,13 +670,6 @@ class AgentService:
             else None
         )
 
-
-        executed_signatures: set[str] = set()
-        executed_tool_results: list[dict[str, Any]] = []
-
-        total_tool_calls = 0
-        action_nudge_count = 0
-
         # Инициализация бюджета для этого запроса.
         budget_state = (
             self.budget_manager.create_state(
@@ -693,16 +692,6 @@ class AgentService:
                 reason,
             )
 
-            if executed_tool_results:
-                return await self._create_final_report(
-                    user_text=user_text,
-                    tool_results=(
-                        executed_tool_results
-                    ),
-                    original_complexity=complexity,
-                    budget_exhausted=True,
-                )
-
             return AssistantResponse(
                 display_text=(
                     "Бюджет запроса исчерпан. "
@@ -715,12 +704,7 @@ class AgentService:
                 error_code="BUDGET_EXHAUSTED",
             )
 
-        actual_user_content = (
-            user_content
-            if user_content is not None
-            else user_text
-        )
-
+        # Добавляем пользовательское сообщение в историю.
         self.history.append(
             {
                 "role": "user",
@@ -728,290 +712,147 @@ class AgentService:
             }
         )
 
-        complexity = classify_complexity(
-            user_text,
-            has_image=has_image,
-            needs_tools=use_tools,
+        # Один вызов модели.
+        messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            *self.history,
+        ]
+
+        try:
+            generated = await self._request_model(
+                complexity=complexity,
+                messages=messages,
+                tools=tool_schemas,
+                allow_tools=use_tools,
+                has_image=has_image,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Модельный маршрут завершился ошибкой: %s",
+                exc,
+            )
+
+            return AssistantResponse(
+                display_text=f"Ошибка моделей: {exc}",
+                speech_text=(
+                    "Сэр, модели сейчас не смогли "
+                    "обработать запрос."
+                ),
+                success=False,
+                error_code="MODEL_ROUTE_FAILED",
+            )
+
+        native_tool_calls = generated.tool_calls
+        xml_tool_calls = extract_xml_tool_calls(
+            generated.text,
+            self.registry.names,
         )
 
-        selected_tool_names = select_tool_names(
-            user_text,
-            has_image=has_image,
+        tool_calls = deduplicate_tool_calls(
+            native_tool_calls + xml_tool_calls
         )
 
-        tool_schemas = (
-            self.registry.schemas(selected_tool_names)
-            if use_tools
-            else None
-        )
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": generated.text,
+        }
 
+        if tool_calls:
+            assistant_message["tool_calls"] = tool_calls
+
+        self.history.append(assistant_message)
+
+        if not tool_calls:
+            # Модель не вызвала инструменты.
+            final_text = generated.text.strip()
+
+            action_was_requested = request_requires_action(
+                user_text
+            )
+
+            if (
+                use_tools
+                and action_was_requested
+            ):
+                return AssistantResponse(
+                    display_text=(
+                        "Действие не было подтверждено ни одним "
+                        "инструментом."
+                    ),
+                    speech_text=(
+                        "Сэр, действие не было подтверждено "
+                        "системой."
+                    ),
+                    success=False,
+                    error_code="ACTION_NOT_CONFIRMED",
+                )
+
+            if not final_text:
+                return AssistantResponse(
+                    display_text=(
+                        "Модель вернула пустой ответ."
+                    ),
+                    speech_text=(
+                        "Сэр, модель вернула пустой ответ."
+                    ),
+                    success=False,
+                    error_code="EMPTY_MODEL_RESPONSE",
+                )
+
+            return AssistantResponse(
+                display_text=final_text,
+                speech_text=final_text,
+                success=True,
+            )
+
+        # Выполняем все tool calls.
         executed_signatures: set[str] = set()
         executed_tool_results: list[dict[str, Any]] = []
 
         total_tool_calls = 0
-        action_nudge_count = 0
 
-        for turn_index in range(MAX_AGENT_TURNS):
-            self.history[:] = trim_history(self.history)
+        for tool_call in tool_calls:
+            if total_tool_calls >= MAX_TOOL_CALLS:
+                break
 
-            messages = [
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT,
-                },
-                *self.history,
-            ]
-            # Проверка бюджета перед каждым обращением к модели.
-            budget_state.record_model_call()
-
-            exhausted, reason = (
-                self.budget_manager.is_exhausted(
-                    turn_id
-                )
+            signature = canonical_tool_signature(
+                tool_call
             )
 
-            if exhausted:
-                logger.warning(
-                    "Бюджет исчерпан до запроса модели: %s",
-                    reason,
+            # Проверка повтора через бюджет.
+            if self.budget_manager.is_tool_repeated(
+                turn_id,
+                signature,
+            ):
+                result_content = (
+                    self._duplicate_result_content(
+                        signature
+                    )
                 )
-
-                if executed_tool_results:
-                    return await self._create_final_report(
-                        user_text=user_text,
-                        tool_results=(
-                            executed_tool_results
-                        ),
-                        original_complexity=complexity,
-                        budget_exhausted=True,
-                    )
-
-                return AssistantResponse(
-                    display_text=(
-                        "Бюджет запроса исчерпан. "
-                        f"Причина: {reason}"
-                    ),
-                    speech_text=(
-                        "Сэр, бюджет запроса исчерпан."
-                    ),
-                    success=False,
-                    error_code="BUDGET_EXHAUSTED",
-                )
-
-            try:
-                    generated = await self._request_model(
-                    complexity=complexity,
-                    messages=messages,
-                    tools=tool_schemas,
-                    allow_tools=use_tools,
-                    has_image=has_image,
-                )
-            except Exception as exc:
-                logger.warning(
-                "Модельный маршрут завершился ошибкой: %s",
-                exc,
-                )
-
-                if executed_tool_results:
-                    return await self._create_final_report(
-                        user_text=user_text,
-                        tool_results=executed_tool_results,
-                        original_complexity=complexity,
-                        budget_exhausted=False,
-                    )
-
-                return AssistantResponse(
-                    display_text=f"Ошибка моделей: {exc}",
-                    speech_text=(
-                        "Сэр, модели сейчас не смогли "
-                        "обработать запрос."
-                    ),
-                    success=False,
-                    error_code="MODEL_ROUTE_FAILED",
-                )
-
-            native_tool_calls = generated.tool_calls
-            xml_tool_calls = extract_xml_tool_calls(
-                generated.text,
-                self.registry.names,
-            )
-
-            tool_calls = deduplicate_tool_calls(
-                native_tool_calls + xml_tool_calls
-            )
-
-            assistant_message: dict[str, Any] = {
-                "role": "assistant",
-                "content": generated.text,
-            }
-
-            if tool_calls:
-                assistant_message["tool_calls"] = tool_calls
-
-            self.history.append(assistant_message)
-
-            if not tool_calls:
-                final_text = generated.text.strip()
-
-                action_was_requested = request_requires_action(
-                    user_text
-                )
-
-                if (
-                    use_tools
-                    and action_was_requested
-                    and not executed_tool_results
-                ):
-                    action_nudge_count += 1
-
-                    if action_nudge_count <= 1:
-                        self.history.append(
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Пользователь запросил действие, "
-                                    "но ни один инструмент пока не был "
-                                    "выполнен. Запрещено заявлять об "
-                                    "успехе. Вызови подходящий доступный "
-                                    "инструмент. Если выполнить действие "
-                                    "невозможно, честно сообщи причину."
-                                ),
-                            }
-                        )
-                        continue
-
-                    return AssistantResponse(
-                        display_text=(
-                            "Действие не было подтверждено ни одним "
-                            "инструментом."
-                        ),
-                        speech_text=(
-                            "Сэр, действие не было подтверждено "
-                            "системой."
-                        ),
-                        success=False,
-                        error_code="ACTION_NOT_CONFIRMED",
-                    )
-
-                if executed_tool_results:
-                    # После инструментов доверяем не свободному тексту
-                    # текущей модели, а отдельному итоговому отчету.
-                    return await self._create_final_report(
-                        user_text=user_text,
-                        tool_results=executed_tool_results,
-                        original_complexity=complexity,
-                        budget_exhausted=False,
-                    )
-
-                if not final_text:
-                    return AssistantResponse(
-                        display_text=(
-                            "Модель вернула пустой ответ."
-                        ),
-                        speech_text=(
-                            "Сэр, модель вернула пустой ответ."
-                        ),
-                        success=False,
-                        error_code="EMPTY_MODEL_RESPONSE",
-                    )
-
-                return AssistantResponse(
-                    display_text=final_text,
-                    speech_text=final_text,
-                    success=True,
-                )
-
-            for tool_call in tool_calls:
-                if total_tool_calls >= MAX_TOOL_CALLS:
-                    break
-
-                signature = canonical_tool_signature(
-                    tool_call
-                )
-                    # Проверка повтора через бюджет.
-                if  self.budget_manager.is_tool_repeated(
-                        turn_id,
-                        signature,
-                    ):
-                    result_content = (
-                        self._duplicate_result_content(
-                            signature
-                        )
-                    )
-                    self.history.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": (
-                                tool_call["id"]
-                            ),
-                            "name": (
-                                tool_call[
-                                    "function"
-                                ]["name"]
-                            ),
-                            "content": result_content,
-                        }
-                    )
-                    continue
-
-                executed_signatures.add(signature)
-                self.budget_manager.record_tool_call(
-                        turn_id,
-                        signature,
-                    )
-
-                if signature in executed_signatures:
-                    result_content = (
-                        self._duplicate_result_content(
-                            signature
-                        )
-                    )
-
-                    self.history.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "name": (
-                                tool_call["function"]["name"]
-                            ),
-                            "content": result_content,
-                        }
-                    )
-                    continue
-
-                executed_signatures.add(signature)
-
-                logger.info(
-                    "Выполняется инструмент %s.",
-                    tool_call["function"]["name"],
-                )
-
-                tool_context = ToolContext.create(
-                    session_id=self.session_id,
-                    turn_id=turn_id,
-                    source="assistant",
-                    metadata={
-                        "user_request": user_text,
-                        "has_image": has_image,
-                        "agent_complexity": (
-                            complexity.value
-                        ),
+                self.history.append(
+                    {
+                        "role": "tool",
                         "tool_call_id": (
-                            tool_call.get("id")
+                            tool_call["id"]
                         ),
-                    },
+                        "name": (
+                            tool_call[
+                                "function"
+                            ]["name"]
+                        ),
+                        "content": result_content,
+                    }
                 )
+                continue
 
-                result = await self.runner.execute(
-                    tool_call,
-                    context=tool_context,
-                )
-                total_tool_calls += 1
-
-                executed_tool_results.append(
-                    self._tool_result_record(
-                        tool_call,
-                        result,
+            # Проверка локального дедупликатора (после проверки бюджета).
+            if signature in executed_signatures:
+                result_content = (
+                    self._duplicate_result_content(
+                        signature
                     )
                 )
 
@@ -1022,20 +863,71 @@ class AgentService:
                         "name": (
                             tool_call["function"]["name"]
                         ),
-                        "content": result.to_model_content(),
+                        "content": result_content,
                     }
                 )
+                continue
 
-            if total_tool_calls >= MAX_TOOL_CALLS:
-                logger.warning(
-                    "Достигнут лимит инструментов: %s.",
-                    MAX_TOOL_CALLS,
+            executed_signatures.add(signature)
+            self.budget_manager.record_tool_call(
+                turn_id,
+                signature,
+            )
+
+            logger.info(
+                "Выполняется инструмент %s.",
+                tool_call["function"]["name"],
+            )
+
+            tool_context = ToolContext.create(
+                session_id=self.session_id,
+                turn_id=turn_id,
+                source="assistant",
+                metadata={
+                    "user_request": user_text,
+                    "has_image": has_image,
+                    "agent_complexity": (
+                        complexity.value
+                    ),
+                    "tool_call_id": (
+                        tool_call.get("id")
+                    ),
+                },
+            )
+
+            result = await self.runner.execute(
+                tool_call,
+                context=tool_context,
+            )
+            total_tool_calls += 1
+
+            executed_tool_results.append(
+                self._tool_result_record(
+                    tool_call,
+                    result,
                 )
-                break
+            )
+
+            self.history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "name": (
+                        tool_call["function"]["name"]
+                    ),
+                    "content": result.to_model_content(),
+                }
+            )
+
+        if total_tool_calls >= MAX_TOOL_CALLS:
+            logger.warning(
+                "Достигнут лимит инструментов: %s.",
+                MAX_TOOL_CALLS,
+            )
 
         return await self._create_final_report(
             user_text=user_text,
             tool_results=executed_tool_results,
             original_complexity=complexity,
-            budget_exhausted=True,
+            budget_exhausted=False,
         )
