@@ -20,7 +20,7 @@ def test_budget_starts_not_exhausted() -> None:
 
 
 def test_model_call_limit_works() -> None:
-    budget = AgentBudget(max_model_calls=2)
+    budget = AgentBudget(max_logical_model_calls=2)
     state = BudgetState()
 
     state.record_model_call()
@@ -30,7 +30,7 @@ def test_model_call_limit_works() -> None:
 
     assert exhausted
     assert reason is not None
-    assert "модельных вызовов" in reason
+    assert "логических модельных вызовов" in reason
 
 
 def test_tool_call_limit_works() -> None:

@@ -630,12 +630,6 @@ async def run_voice_loop(
             )
         )
 
-        resolved_request = (
-            windows_context.resolve_reference(
-                user_request
-            )
-        )
-
         request = UserRequest.from_voice(
             resolved_request,
             wake_word=False,
