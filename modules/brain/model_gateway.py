@@ -1,6 +1,7 @@
 # modules/brain/model_gateway.py
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import time
@@ -25,6 +26,10 @@ OPENROUTER_API_KEYS: tuple[str, ...] = tuple(
     getattr(config, "OPENROUTER_API_KEYS", ())
 )
 
+GEMINI_API_KEYS: tuple[str, ...] = tuple(
+    getattr(config, "GEMINI_API_KEYS", ())
+)
+
 GROQ_BASE_URL = getattr(
     config,
     "GROQ_BASE_URL",
@@ -35,6 +40,18 @@ OPENROUTER_BASE_URL = getattr(
     config,
     "OPENROUTER_BASE_URL",
     "https://openrouter.ai/api/v1",
+)
+
+GEMINI_BASE_URL = getattr(
+    config,
+    "GEMINI_BASE_URL",
+    "https://generativelanguage.googleapis.com/v1beta/openai/",
+)
+
+GEMINI_QUOTA_GROUP = getattr(
+    config,
+    "GEMINI_QUOTA_GROUP",
+    "gemini-project-main",
 )
 
 LLM_REQUEST_TIMEOUT = float(
@@ -85,6 +102,7 @@ class KeySlot:
     provider: str
     index: int
     api_key: str
+    quota_group: str | None = None
 
     # Только глобальное состояние ключа.
     disabled: bool = False
@@ -99,7 +117,8 @@ class KeySlot:
     @property
     def label(self) -> str:
         # Значение ключа никогда не выводится в лог.
-        return f"{self.provider}-key-{self.index + 1}"
+        group_suffix = f"-{self.quota_group}" if self.quota_group else ""
+        return f"{self.provider}-key-{self.index + 1}{group_suffix}"
 
     @property
     def globally_available(self) -> bool:
@@ -186,6 +205,12 @@ class ModelGateway:
     """
 
     def __init__(self) -> None:
+        # Определяем группы квот для каждого провайдера
+        gemini_quota_groups: dict[int, str] = {}
+        if GEMINI_QUOTA_GROUP:
+            for index, _ in enumerate(GEMINI_API_KEYS):
+                gemini_quota_groups[index] = GEMINI_QUOTA_GROUP
+
         self._key_slots: dict[str, list[KeySlot]] = {
             "groq": [
                 KeySlot(
@@ -207,6 +232,17 @@ class ModelGateway:
                     OPENROUTER_API_KEYS
                 )
             ],
+            "gemini": [
+                KeySlot(
+                    provider="gemini",
+                    index=index,
+                    api_key=api_key,
+                    quota_group=gemini_quota_groups.get(index),
+                )
+                for index, api_key in enumerate(
+                    GEMINI_API_KEYS
+                )
+            ],
         }
 
         self._clients: dict[
@@ -217,6 +253,7 @@ class ModelGateway:
         self._preferred_key_index: dict[str, int] = {
             "groq": 0,
             "openrouter": 0,
+            "gemini": 0,
         }
 
         # Cooldown конкретного маршрута:
@@ -238,6 +275,12 @@ class ModelGateway:
             float,
         ] = {}
 
+        # Cooldown группы квоты (provider + quota_group).
+        self._quota_group_cooldowns: dict[
+            tuple[str, str],
+            float,
+        ] = {}
+
     async def close(self) -> None:
         clients = list(self._clients.values())
         self._clients.clear()
@@ -251,6 +294,9 @@ class ModelGateway:
 
         if provider == "openrouter":
             return OPENROUTER_BASE_URL
+
+        if provider == "gemini":
+            return GEMINI_BASE_URL
 
         raise ValueError(
             f"Неизвестный провайдер: {provider}"
@@ -334,6 +380,50 @@ class ModelGateway:
         return (
             candidate.provider,
             candidate.model,
+        )
+
+    def _quota_group_identity(
+        self,
+        slot: KeySlot,
+    ) -> tuple[str, str] | None:
+        """Возвращает идентификатор группы квоты если key имеет quota_group."""
+        if slot.quota_group:
+            return (slot.provider, slot.quota_group)
+        return None
+
+    def _quota_group_cooldown_remaining(
+        self,
+        slot: KeySlot,
+    ) -> float:
+        """Возвращает оставшееся время cooldown группы квоты."""
+        identity = self._quota_group_identity(slot)
+        if not identity:
+            return 0.0
+
+        cooldown_until = self._quota_group_cooldowns.get(
+            identity,
+            0.0,
+        )
+        return max(0.0, cooldown_until - time.monotonic())
+
+    def _set_quota_group_cooldown(
+        self,
+        slot: KeySlot,
+        seconds: float,
+    ) -> None:
+        """Ставит cooldown на всю группу квоты."""
+        identity = self._quota_group_identity(slot)
+        if not identity or seconds <= 0:
+            return
+
+        self._quota_group_cooldowns[identity] = max(
+            self._quota_group_cooldowns.get(identity, 0.0),
+            time.monotonic() + seconds,
+        )
+        logger.info(
+            "Группа квоты %s поставлена на cooldown %.0f сек.",
+            identity[1],
+            seconds,
         )
 
     def _route_cooldown_remaining(
@@ -871,6 +961,10 @@ class ModelGateway:
                 }
             }
 
+        if candidate.provider == "gemini":
+            # Gemini не требует extra_headers, но можно добавить если нужно
+            pass
+
         stream = await (
             client.chat.completions.create(
                 **request_arguments
@@ -965,6 +1059,11 @@ class ModelGateway:
             slot.start_global_cooldown(
                 failure.cooldown_seconds,
                 failure.message,
+            )
+            # Также ставим cooldown на группу квоты если есть
+            self._set_quota_group_cooldown(
+                slot,
+                failure.cooldown_seconds,
             )
             return
 
@@ -1136,6 +1235,19 @@ class ModelGateway:
                     )
                     continue
 
+                # Проверяем quota group cooldown
+                quota_group_cooldown = self._quota_group_cooldown_remaining(slot)
+                if quota_group_cooldown > 0:
+                    logger.info(
+                        "%s пропущен: quota group cooldown %.0f сек.",
+                        slot.label,
+                        quota_group_cooldown,
+                    )
+                    failure_messages.append(
+                        f"{candidate.identity}/{slot.label}: quota group cooldown {quota_group_cooldown:.0f} сек."
+                    )
+                    continue
+
                 route_cooldown = (
                     self._route_cooldown_remaining(
                         slot,
@@ -1284,6 +1396,7 @@ class ModelGateway:
                         "last_success_at": (
                             slot.last_success_at
                         ),
+                        "quota_group": slot.quota_group,
                     }
                 )
 
@@ -1369,11 +1482,38 @@ class ModelGateway:
                 }
             )
 
+        quota_group_states: list[dict[str, Any]] = []
+
+        for (
+            provider,
+            quota_group,
+        ), cooldown_until in self._quota_group_cooldowns.items():
+            remaining = max(
+                0.0,
+                cooldown_until
+                - current_monotonic,
+            )
+
+            if remaining <= 0:
+                continue
+
+            quota_group_states.append(
+                {
+                    "provider": provider,
+                    "quota_group": quota_group,
+                    "cooldown_seconds": round(
+                        remaining,
+                        1,
+                    ),
+                }
+            )
+
         return {
             "keys": key_states,
             "routes": route_states,
             "models": model_states,
             "providers": provider_states,
+            "quota_groups": quota_group_states,
         }
 
 
@@ -1382,8 +1522,6 @@ async def _gather_client_closes(
 ) -> None:
     if not clients:
         return
-
-    import asyncio
 
     await asyncio.gather(
         *(

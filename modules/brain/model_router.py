@@ -17,6 +17,12 @@ from core.config import (
     OPENROUTER_TOOL_MODELS,
     OPENROUTER_ULTRA_MODELS,
     OPENROUTER_VISION_MODELS,
+    GEMINI_API_KEYS,
+    GEMINI_CHAT_MODELS,
+    GEMINI_TOOL_MODELS,
+    GEMINI_COMPLEX_MODELS,
+    GEMINI_ULTRA_MODELS,
+    GEMINI_VISION_MODELS,
 )
 
 
@@ -48,48 +54,50 @@ ULTRA_MARKERS = (
     "найди причину во всем проекте",
     "мигрируй проект",
     "перепиши весь проект",
-    "сложное исследование",
-    "глубокий анализ",
-    "сравни несколько подходов",
-    "проанализируй репозиторий",
-    "разработай стратегию",
-    "проверь безопасность проекта",
+    "глобальный рефакторинг",
+    "сквозное тестирование",
+    "массовые изменения",
+    "архитектурный аудит",
+    "полная миграция",
 )
 
 COMPLEX_MARKERS = (
-    "затем",
-    "после чего",
-    "а потом",
-    "и потом",
-    "а также",
-    "сначала",
-    "исправь",
-    "установи",
-    "создай проект",
-    "запусти тесты",
-    "проанализируй логи",
-    "напиши код",
-    "открой и напиши",
+    "рефактор",
+    "починить баг",
+    "исправить ошибку",
+    "найти утечку",
+    "оптимизировать запрос",
+    "профилировать",
+    "добавить тесты",
+    "покрыть тестами",
+    "написать документацию",
+    "code review",
+    "разобраться в коде",
+    "изучить код",
 )
 
 ACTION_VERBS = (
-    "открой",
-    "запусти",
-    "закрой",
-    "напиши",
-    "вставь",
-    "создай",
-    "установи",
-    "проверь",
-    "найди",
-    "скачай",
-    "выполни",
-    "нажми",
-    "переключи",
-    "сохрани",
-    "удали",
-    "перемести",
-    "скопируй",
+    "создать",
+    "написать",
+    "сделать",
+    "добавить",
+    "удалить",
+    "изменить",
+    "обновить",
+    "исправить",
+    "найти",
+    "поиск",
+    "проверить",
+    "запустить",
+    "собрать",
+    "установить",
+    "настроить",
+    "разобраться",
+    "понять",
+    "объяснить",
+    "показать",
+    "вывести",
+    "сохранить",
 )
 
 
@@ -122,14 +130,14 @@ def classify_complexity(
 
     code_markers = (
         "traceback",
-        "архитектур",
-        "безопасност",
-        "рефактор",
-        "docker",
-        "kubernetes",
-        "миграц",
-        "база данных",
-        "асинхрон",
+        " ошибка ",
+        " исключение ",
+        " docker",
+        " kubernetes",
+        " миграция",
+        " схема бд",
+        " оптимизацию",
+        " профилировать",
     )
     ultra_score += sum(
         1
@@ -204,8 +212,28 @@ def build_model_route(
                 )
             )
 
+        if GEMINI_API_KEYS:
+            candidates.extend(
+                _candidates(
+                    "gemini",
+                    GEMINI_VISION_MODELS,
+                    supports_tools=True,
+                    supports_vision=True,
+                    start_priority=20,
+                )
+            )
+
     elif complexity == TaskComplexity.ULTRA:
-        # Ультрасложные задачи сразу отправляем на OpenRouter.
+        if GEMINI_API_KEYS:
+            candidates.extend(
+                _candidates(
+                    "gemini",
+                    GEMINI_ULTRA_MODELS,
+                    supports_tools=True,
+                    start_priority=20,
+                )
+            )
+
         if OPENROUTER_API_KEYS:
             candidates.extend(
                 _candidates(
@@ -227,6 +255,16 @@ def build_model_route(
             )
 
     elif complexity == TaskComplexity.COMPLEX_TOOL:
+        if GEMINI_API_KEYS:
+            candidates.extend(
+                _candidates(
+                    "gemini",
+                    GEMINI_COMPLEX_MODELS,
+                    supports_tools=True,
+                    start_priority=20,
+                )
+            )
+
         if GROQ_API_KEYS:
             candidates.extend(
                 _candidates(
@@ -248,6 +286,16 @@ def build_model_route(
             )
 
     elif complexity == TaskComplexity.BASIC_TOOL:
+        if GEMINI_API_KEYS:
+            candidates.extend(
+                _candidates(
+                    "gemini",
+                    GEMINI_TOOL_MODELS,
+                    supports_tools=True,
+                    start_priority=20,
+                )
+            )
+
         if GROQ_API_KEYS:
             candidates.extend(
                 _candidates(
@@ -268,7 +316,17 @@ def build_model_route(
                 )
             )
 
-    else:
+    else:  # CHAT
+        if GEMINI_API_KEYS:
+            candidates.extend(
+                _candidates(
+                    "gemini",
+                    GEMINI_CHAT_MODELS,
+                    supports_tools=False,
+                    start_priority=20,
+                )
+            )
+
         if GROQ_API_KEYS:
             candidates.extend(
                 _candidates(

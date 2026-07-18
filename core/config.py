@@ -74,6 +74,12 @@ OPENROUTER_API_KEYS = _collect_keys(
     "OPENROUTER_API_KEY",
 )
 
+GEMINI_API_KEYS = _collect_keys(
+    "GEMINI_API_KEYS",
+    "GEMINI_API_KEY",
+    "GEMINI_API_KEY",
+)
+
 # Старые импорты продолжают работать.
 GROQ_API_KEY = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""
 OPENROUTER_API_KEY = (
@@ -85,19 +91,25 @@ OPENROUTER_API_KEY = (
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 
-if not GROQ_API_KEYS and not OPENROUTER_API_KEYS:
+if not GROQ_API_KEYS and not OPENROUTER_API_KEYS and not GEMINI_API_KEYS:
     raise ValueError(
-        "Не найден ни один ключ Groq или OpenRouter."
+        "Не найден ни один ключ Groq, OpenRouter или Gemini."
     )
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_QUOTA_GROUP = os.getenv("GEMINI_QUOTA_GROUP", "gemini-project-main")
 
 # Сохраняем совместимость со старым кодом.
 if GROQ_API_KEYS:
     PROVIDER = "groq"
     BASE_URL = GROQ_BASE_URL
     API_KEY = GROQ_API_KEYS[0]
+elif GEMINI_API_KEYS:
+    PROVIDER = "gemini"
+    BASE_URL = GEMINI_BASE_URL
+    API_KEY = GEMINI_API_KEYS[0]
 else:
     PROVIDER = "openrouter"
     BASE_URL = OPENROUTER_BASE_URL
@@ -156,34 +168,32 @@ OPENROUTER_VISION_MODELS = _model_list(
     "meta-llama/llama-4-scout:free,openrouter/free",
 )
 
-DEFAULT_MODEL = (
-    GROQ_CHAT_MODELS[0]
-    if GROQ_API_KEYS
-    else OPENROUTER_CHAT_MODELS[0]
+GEMINI_CHAT_MODELS = _model_list(
+    "NOVA_GEMINI_CHAT_MODELS",
+    "gemini-2.5-flash",
 )
 
-MODEL_CV_BASE = (
-    GROQ_VISION_MODELS[0]
-    if GROQ_API_KEYS
-    else OPENROUTER_VISION_MODELS[0]
+GEMINI_TOOL_MODELS = _model_list(
+    "NOVA_GEMINI_TOOL_MODELS",
+    "gemini-2.5-flash",
 )
 
-MODEL_BASIC_TOOLS = (
-    GROQ_TOOL_MODELS[0]
-    if GROQ_API_KEYS
-    else OPENROUTER_TOOL_MODELS[0]
+GEMINI_COMPLEX_MODELS = _model_list(
+    "NOVA_GEMINI_COMPLEX_MODELS",
+    "gemini-2.5-flash",
 )
 
-MODEL_COMPLEX_TOOLS = (
-    GROQ_COMPLEX_MODELS[0]
-    if GROQ_API_KEYS
-    else OPENROUTER_COMPLEX_MODELS[0]
+GEMINI_ULTRA_MODELS = _model_list(
+    "NOVA_GEMINI_ULTRA_MODELS",
+    "gemini-2.5-flash",
 )
 
-SMART_MODEL = OPENROUTER_ULTRA_MODELS[0]
-LLAMA_BEST = MODEL_CV_BASE
-FALLBACK_MODEL = "openrouter/free"
+GEMINI_VISION_MODELS = _model_list(
+    "NOVA_GEMINI_VISION_MODELS",
+    "gemini-2.5-flash",
+)
 
+# Добавляем Gemini в список моделей
 MODELS_LIST = list(
     dict.fromkeys(
         [
@@ -196,9 +206,50 @@ MODELS_LIST = list(
             *OPENROUTER_COMPLEX_MODELS,
             *OPENROUTER_ULTRA_MODELS,
             *OPENROUTER_VISION_MODELS,
+            *GEMINI_CHAT_MODELS,
+            *GEMINI_TOOL_MODELS,
+            *GEMINI_COMPLEX_MODELS,
+            *GEMINI_ULTRA_MODELS,
+            *GEMINI_VISION_MODELS,
         ]
     )
 )
+
+DEFAULT_MODEL = (
+    GROQ_CHAT_MODELS[0]
+    if GROQ_API_KEYS
+    else GEMINI_CHAT_MODELS[0]
+    if GEMINI_API_KEYS
+    else OPENROUTER_CHAT_MODELS[0]
+)
+
+MODEL_CV_BASE = (
+    GROQ_VISION_MODELS[0]
+    if GROQ_API_KEYS
+    else GEMINI_VISION_MODELS[0]
+    if GEMINI_API_KEYS
+    else OPENROUTER_VISION_MODELS[0]
+)
+
+MODEL_BASIC_TOOLS = (
+    GROQ_TOOL_MODELS[0]
+    if GROQ_API_KEYS
+    else GEMINI_TOOL_MODELS[0]
+    if GEMINI_API_KEYS
+    else OPENROUTER_TOOL_MODELS[0]
+)
+
+MODEL_COMPLEX_TOOLS = (
+    GROQ_COMPLEX_MODELS[0]
+    if GROQ_API_KEYS
+    else GEMINI_COMPLEX_MODELS[0]
+    if GEMINI_API_KEYS
+    else OPENROUTER_COMPLEX_MODELS[0]
+)
+
+SMART_MODEL = OPENROUTER_ULTRA_MODELS[0]
+LLAMA_BEST = MODEL_CV_BASE
+FALLBACK_MODEL = "openrouter/free"
 
 LLM_REQUEST_TIMEOUT = float(
     os.getenv("NOVA_LLM_REQUEST_TIMEOUT", "90")
