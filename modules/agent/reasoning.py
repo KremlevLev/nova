@@ -6,6 +6,7 @@ Iterative reasoning loop с self-reflection и dynamic replanning.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -152,6 +153,58 @@ class ReasoningLoop:
             budget_exhausted=not state.goal_achieved,
         )
     
+    async def run_parallel(
+        self,
+        state: ReasoningState,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        has_image: bool = False,
+    ) -> AssistantResponse:
+        """
+        Запускает reasoning loop с параллельным выполнением инструментов.
+        
+        Все инструменты в рамках одной итерации выполняются параллельно.
+        """
+        all_tool_results: list[dict[str, Any]] = []
+        
+        tool_schemas = self.registry.schemas() if self.registry else None
+        
+        while state.current_iteration < state.max_iterations:
+            state.current_iteration += 1
+            
+            logger.info(
+                "Reasoning iteration %s/%s (parallel)",
+                state.current_iteration,
+                state.max_iterations,
+            )
+            
+            # Фаза THOUGHT: анализ текущей ситуации
+            thought_step = await self._think(state, tools=tool_schemas)
+            
+            if not thought_step.should_continue:
+                break
+            
+            # Фаза ACTION: параллельное выполнение инструментов
+            action_results = await self._act_parallel(
+                thought_step,
+                state,
+            )
+            
+            all_tool_results.extend(action_results)
+            state.partial_results.extend(action_results)
+            
+            # Фаза REFLECTION: оценка результатов
+            reflection = await self._reflect(thought_step, state)
+            
+            if state.goal_achieved or reflection.confidence >= state.confidence_threshold:
+                state.final_answer = reflection.content
+                break
+        
+        return build_assistant_response_from_tools(
+            all_tool_results,
+            budget_exhausted=not state.goal_achieved,
+        )
+    
     async def _think(
         self,
         state: ReasoningState,
@@ -201,7 +254,6 @@ class ReasoningLoop:
             })
         
         try:
-            # Используем модель с поддержкой инструментов
             candidates = [
                 ModelCandidate(
                     provider="groq",
@@ -238,7 +290,7 @@ class ReasoningLoop:
                 phase=ReasoningPhase.THOUGHT,
                 content=response.text,
                 tool_calls=all_tool_calls,
-                confidence=0.5,  # Базовая уверенность
+                confidence=0.5,
             )
             
             state.steps.append(step)
@@ -260,13 +312,11 @@ class ReasoningLoop:
         tools: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Фаза ACTION: выполнение выбранных инструментов.
+        Фаза ACTION: выполнение выбранных инструментов (последовательно).
         """
-        # Используем tool_calls из thought_step
         tool_calls = thought_step.tool_calls
         
         if not tool_calls:
-            # Может быть, модель сформировала финальный ответ
             thought_step.should_continue = False
             return []
         
@@ -274,7 +324,6 @@ class ReasoningLoop:
         
         for tool_call in tool_calls:
             try:
-                # Создаём контекст для инструмента
                 context = ToolContext.create(
                     session_id=state.session_id,
                     turn_id=state.turn_id,
@@ -316,6 +365,67 @@ class ReasoningLoop:
         state.steps.append(action_step)
         return results
     
+    async def _act_parallel(
+        self,
+        thought_step: ReasoningStep,
+        state: ReasoningState,
+    ) -> list[dict[str, Any]]:
+        """
+        Фаза ACTION: параллельное выполнение инструментов.
+        """
+        tool_calls = thought_step.tool_calls
+        
+        if not tool_calls:
+            thought_step.should_continue = False
+            return []
+        
+        async def execute_single(tool_call: dict[str, Any]) -> dict[str, Any]:
+            try:
+                context = ToolContext.create(
+                    session_id=state.session_id,
+                    turn_id=state.turn_id,
+                    source="reasoning_loop_parallel",
+                    metadata={
+                        "reasoning_iteration": state.current_iteration,
+                        "reasoning_phase": "action_parallel",
+                    },
+                )
+                
+                result = await self.runner.execute(
+                    tool_call,
+                    context=context,
+                )
+                
+                return {
+                    "name": tool_call.get("function", {}).get("name", "unknown"),
+                    "arguments": tool_call.get("function", {}).get("arguments", {}),
+                    "result": result.to_dict(),
+                }
+                
+            except Exception as exc:
+                logger.warning(
+                    "Tool execution failed in parallel reasoning: %s",
+                    exc,
+                )
+                return {
+                    "name": tool_call.get("function", {}).get("name", "unknown"),
+                    "error": str(exc),
+                }
+        
+        results = await asyncio.gather(*[
+            execute_single(tc) for tc in tool_calls
+        ])
+        
+        action_step = ReasoningStep(
+            phase=ReasoningPhase.ACTION,
+            content=f"Выполнено {len(results)} инструментов (параллельно)",
+            tool_calls=tool_calls,
+            tool_results=list(results),
+        )
+        
+        state.steps.append(action_step)
+        return list(results)
+    
     async def _reflect(
         self,
         action_step: ReasoningStep,
@@ -326,7 +436,6 @@ class ReasoningLoop:
         """
         from core.config import SYSTEM_PROMPT
         
-        # Анализируем успешность выполнения
         successful = sum(
             1 for r in action_step.tool_results
             if r.get("result", {}).get("success", False)
@@ -335,7 +444,6 @@ class ReasoningLoop:
         total = len(action_step.tool_results)
         
         if total == 0:
-            # Нет инструментов - возможно, цель достигнута
             state.goal_achieved = True
             return ReasoningStep(
                 phase=ReasoningPhase.REFLECTION,
@@ -343,10 +451,8 @@ class ReasoningLoop:
                 confidence=0.9,
             )
         
-        # Вычисляем уверенность на основе результатов
         confidence = successful / total if total > 0 else 0.0
         
-        # Если все инструменты успешны и это была последняя итерация
         if confidence >= state.confidence_threshold:
             state.goal_achieved = True
         

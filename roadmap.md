@@ -11,13 +11,14 @@
 - [x] Add Execution Checkpoint
 - [x] Add Execution Ledger
 - [x] Implement ToolObservation for context reduction
-- [x] Run all tests after each major change (304 passed)
+- [x] Run all tests after each major change (315 passed)
 - [x] **7. Разделение счётчиков** - обновлен budgets.py с новыми счётчиками
 - [x] **8. Целевой бюджет запроса** - обновлены лимиты в AgentBudget
 - [x] **10. Model Catalog** - создан modules/brain/model_catalog.py
 - [x] **Приоритет 5 - Tool Visibility** - создан modules/tools/tool_visibility.py
 - [x] **Clean up main.py bootstrap duplicates** - удалено дублирование resolved_request
 - [x] **Приоритет 7 - Reasoning Loop / ReAct Pattern** - создан modules/agent/reasoning.py
+- [x] **Приоритет 11 - Tool Composition** - создан modules/tools/composition.py + параллельное выполнение в reasoning
 
 ## Текущие задачи
 
@@ -41,6 +42,15 @@
 - ✅ **Confidence scoring**: вычисление уверенности на основе результатов
 - ✅ Создан modules/agent/reasoning.py
 - ✅ Написаны тесты tests/test_reasoning.py (11 passed)
+
+### Приоритет 11 - Tool Composition (ВЫПОЛНЕН)
+
+- ✅ **Tool chains**: ToolChain и ToolChainStep для последовательного выполнения
+- ✅ **Conditional execution**: if-then логика через condition параметр
+- ✅ **Parallel execution**: параллельный запуск независимых инструментов
+- ✅ Создан modules/tools/composition.py
+- ✅ Написаны тесты tests/test_composition.py (13 passed)
+- ✅ Интегрировано в ReasoningLoop через run_parallel()
 
 ## Будущие улучшения (планируются)
 
@@ -67,14 +77,6 @@
 - **OCR integration**: распознавание текста + последующее действие
 - **Screenshot analysis**: понимание UI через изображения
 - **Visual planning**: планирование на основе визуального контекста
-
-### Приоритет 11 - Tool Composition
-
-Идеи из композиционных систем:
-- **Tool chains**: автоматическое цепление инструментов
-- **Conditional execution**: if-then логика для инструментов
-- **Tool synthesis**: создание новых инструментов из существующих
-- **Parallel execution**: параллельный запуск независимых инструментов
 
 ### Приоритет 12 - Recovery & Self-healing
 
