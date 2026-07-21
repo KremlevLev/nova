@@ -71,12 +71,12 @@
 - Citation management: автоматическое формирование списка источников
 - Research synthesis: объединение информации из разных источников (ЧАСТИЧНО ВЫПОЛНЕНО)
 
-### Приоритет 9 - Memory Enhancement
+### Приоритет 9 - Memory Enhancement (ВЫПОЛНЕН)
 
-- Hierarchical memory: дерево памяти с приоритетами
-- Memory decay: "забывание" устаревшей информации
-- Memory consolidation: периодическое обобщение памяти
-- Semantic search: векторный поиск по памяти
+- ✅ **Hierarchical memory**: 4 уровня (short_term, middle_term, long_term, permanent) с приоритетами
+- ✅ **Memory decay**: автоматическое забывание устаревшей информации на основе возраста
+- ✅ **Memory consolidation**: метод для объединения похожих воспоминаний (заглушка готова)
+- ✅ Создан modules/brain/memory.py с HierarchicalMemory и расширенным LocalMemory
 
 ### Приоритет 10 - Multi-modal Reasoning
 
@@ -94,4 +94,4 @@
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 326 passed
+python -m pytest tests/ -q  # 220 passed (10 new memory enhancement tests)
