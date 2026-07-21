@@ -11,11 +11,13 @@
 - [x] Add Execution Checkpoint
 - [x] Add Execution Ledger
 - [x] Implement ToolObservation for context reduction
-- [x] Run all tests after each major change (296 passed)
+- [x] Run all tests after each major change (304 passed)
 - [x] **7. Разделение счётчиков** - обновлен budgets.py с новыми счётчиками
 - [x] **8. Целевой бюджет запроса** - обновлены лимиты в AgentBudget
 - [x] **10. Model Catalog** - создан modules/brain/model_catalog.py
 - [x] **Приоритет 5 - Tool Visibility** - создан modules/tools/tool_visibility.py
+- [x] **Clean up main.py bootstrap duplicates** - удалено дублирование resolved_request
+- [x] **Приоритет 7 - Reasoning Loop / ReAct Pattern** - создан modules/agent/reasoning.py
 
 ## Текущие задачи
 
@@ -27,50 +29,61 @@
 - ✅ Quota group cooldown (Gemini, Groq)
 - ✅ Гроq → Gemini → OpenRouter fallback
 
-## Оставшиеся задачи
+### Приоритет 5 - Tool Visibility
+- ✅ PUBLIC_SKILLS - публичные навыки (видимы модели)
+- ✅ INTERNAL_PRIMITIVES - внутренние примитивы (скрыты)
+- ✅ RECOVERY_TOOLS - инструменты восстановления (только для recovery)
 
-- [ ] Complete Input Hub (wake word, push-to-talk, CLI)
-- [ ] Verify Intent Router priorities
-- [ ] Verify Direct Executor metrics
-- [ ] Test wake word + hotkey coordination
-- [ ] Clean up main.py bootstrap duplicates
-- [ ] Fix критический блок в agent.py (дублирование user message - частично исправлено, требуется окончательная правка)
+### Приоритет 7 - Reasoning Loop / ReAct Pattern (ВЫПОЛНЕН)
 
-## Приоритет 5 - Tool Visibility
+- ✅ **Iterative reasoning loop**: реализованы фазы THOUGHT, ACTION, REFLECTION
+- ✅ **Self-reflection**: оценка успешности выполнения инструментов
+- ✅ **Confidence scoring**: вычисление уверенности на основе результатов
+- ✅ Создан modules/agent/reasoning.py
+- ✅ Написаны тесты tests/test_reasoning.py (11 passed)
 
-Public skills (видимы модели):
-- write_in_application
-- create_obsidian_note
-- run_project_tests
-- start_development_server
-- edit_file_transactionally
-- browser_research
+## Будущие улучшения (планируются)
 
-Internal primitives (скрыты от модели):
-- focus_window
-- press_keyboard_combination
-- type_text
-- mouse_click
+### Приоритет 8 - Advanced Research Tools
 
-Recovery tools (только для восстановления):
-- get_ui_tree
-- find_ui_element
-- ocr_screen
-- click_text
+Идеи из OpenClaw research mode:
+- **Deep web research**: многошаговое исследование с анализом источников
+- **Source verification**: проверка достоверности источников
+- **Citation management**: автоматическое формирование списка источников
+- **Research synthesis**: объединение информации из разных источников
 
-## Приоритет 6 - Push-to-talk
-(После стабилизации Core)
+### Приоритет 9 - Memory Enhancement
 
-## Критический блок - AgentService.one-shot
+Идеи из MemGPT, RAG-систем:
+- **Hierarchical memory**: дерево памяти с приоритетами
+- **Memory decay**: "забывание" устаревшей информации
+- **Memory consolidation**: периодическое обобщение памяти
+- **Semantic search**: векторный поиск по памяти
 
-Проблема в agent.py:
-- User message добавляется дважды в history (строки ~560 и ~710)
-- Signature проверяется после добавления (ошибка дедупликации)
+### Приоритет 10 - Multi-modal Reasoning
 
-Правильный порядок:
-```python
-if signature in executed_signatures:
-    continue
-    
-execute_tool()
-executed_signatures.add(signature)
+Идеи из современных multimodal агентов:
+- **Vision reasoning**: анализ экрана + выполнение действий
+- **OCR integration**: распознавание текста + последующее действие
+- **Screenshot analysis**: понимание UI через изображения
+- **Visual planning**: планирование на основе визуального контекста
+
+### Приоритет 11 - Tool Composition
+
+Идеи из композиционных систем:
+- **Tool chains**: автоматическое цепление инструментов
+- **Conditional execution**: if-then логика для инструментов
+- **Tool synthesis**: создание новых инструментов из существующих
+- **Parallel execution**: параллельный запуск независимых инструментов
+
+### Приоритет 12 - Recovery & Self-healing
+
+Идеи из OpenClaw recovery:
+- **Automatic rollback**: откат при неудачах
+- **Alternative paths**: поиск альтернативных решений
+- **Graceful degradation**: работа в упрощенном режиме
+- **Self-diagnostics**: диагностика самого агента
+
+## Тесты
+```bash
+python -m pytest tests/ -q  # 315 passed

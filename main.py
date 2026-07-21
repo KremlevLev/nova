@@ -1165,11 +1165,88 @@ async def async_main() -> None:
 
 
 
+async def test_reasoning_loop(request: str) -> None:
+    """Тестирует Reasoning Loop с заданным запросом."""
+    from modules.agent.reasoning import ReasoningLoop, ReasoningState
+    
+    # Создаём компоненты
+    llm = NovaLLM()
+    registry = ToolRegistry.from_legacy(
+        [ts for ts in ALL_TOOLS if ts["function"]["name"] not in {
+            "execute_plan", "get_plan_status", "cancel_plan",
+            "start_background_plan", "get_background_plan_status",
+            "list_background_plans", "cancel_background_plan",
+        }],
+        build_handlers(
+            LocalMemory(),
+            TaskScheduler(),
+            await asyncio.to_thread(WindowsAppIndexer),
+            process_manager,
+            memory_store,
+            artifact_store,
+            BrowserManager(headless=True),
+        ),
+    )
+    runner = ToolRunner(registry)
+    
+    # Создаём reasoning loop
+    loop = ReasoningLoop(
+        llm=llm,
+        registry=registry,
+        runner=runner,
+        intent_router=None,
+    )
+    
+    state = ReasoningState(
+        turn_id="test_turn",
+        session_id="test_session",
+        original_request=request,
+        max_iterations=3,
+    )
+    
+    print("=" * 60)
+    print("REASONING LOOP TEST")
+    print("=" * 60)
+    print(f"Запрос: {request}")
+    
+    response = await loop.run(state)
+    
+    print(f"\nИтераций: {state.current_iteration}")
+    print(f"Цель достигнута: {state.goal_achieved}")
+    print(f"\nОтвет: {response.display_text}")
+
+
+def run_reasoning_test() -> None:
+    """Запускает тест Reasoning Loop из командной строки."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Nova Reasoning Loop Test")
+    parser.add_argument(
+        "request",
+        nargs="*",
+        help="Запрос для тестирования",
+    )
+    parser.add_argument(
+        "--reasoning",
+        action="store_true",
+        help="Запустить в режиме reasoning loop",
+    )
+    
+    args = parser.parse_args()
+    
+    if args.reasoning and args.request:
+        request_text = " ".join(args.request)
+        asyncio.run(test_reasoning_loop(request_text))
+    else:
+        # Обычный запуск
+        try:
+            asyncio.run(async_main())
+        except RuntimeError as exc:
+            print(f"\n[Критическая ошибка]: {exc}")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("\nNova остановлена пользователем.")
+
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(async_main())
-    except RuntimeError as exc:
-        print(f"\n[Критическая ошибка]: {exc}")
-        sys.exit(1)
-    except KeyboardInterrupt:
-        print("\nNova остановлена пользователем.")
+    run_reasoning_test()

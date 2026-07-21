@@ -7,10 +7,12 @@
 - Execution Checkpoint и Execution Ledger
 - ToolObservation для контекста
 - Obsidian Adapter
-- **7. Разделение счётчиков** - обновлен budgets.py
-- **8. Целевой бюджет запроса** - обновлены лимиты в AgentBudget
-- **10. Model Catalog** - создан modules/brain/model_catalog.py
-- **Приоритет 5 - Tool Visibility** - создан modules/tools/tool_visibility.py
+- **7. Разделение счётчиков** - обновлен `modules/tools/budgets.py`
+- **8. Целевой бюджет запроса** - обновлены лимиты в `AgentBudget`
+- **10. Model Catalog** - создан `modules/brain/model_catalog.py` + тесты
+- **Приоритет 5 - Tool Visibility** - создан `modules/tools/tool_visibility.py`
+- **Clean up main.py** - удалено дублирование `resolved_request`
+- **Приоритет 7 - Reasoning Loop** - создан `modules/agent/reasoning.py` + тесты
 
 ## Текущие задачи
 
@@ -22,26 +24,43 @@
 - ✅ Quota group cooldown (Gemini, Groq)
 - ✅ Гроq → Gemini → OpenRouter fallback
 
-## Оставшиеся задачи
+### Приоритет 5 - Tool Visibility
+- ✅ PUBLIC_SKILLS - публичные навыки (видимы модели)
+- ✅ INTERNAL_PRIMITIVES - внутренние примитивы (скрыты)
+- ✅ RECOVERY_TOOLS - инструменты восстановления (только для recovery)
 
-- [ ] Complete Input Hub (wake word, push-to-talk, CLI)
-- [ ] Verify Intent Router priorities
-- [ ] Verify Direct Executor metrics
-- [ ] Test wake word + hotkey coordination
-- [ ] Clean up main.py bootstrap duplicates
-- [ ] Fix критический блок в agent.py (дублирование user message)
+## Будущие улучшения (планируются)
 
-## Приоритет 5 - Tool Visibility
+### Приоритет 8 - Advanced Research Tools
+- Deep web research: многошаговое исследование с анализом источников
+- Source verification: проверка достоверности источников
+- Citation management: автоматическое формирование списка источников
+- Research synthesis: объединение информации из разных источников
 
-Создан файл `modules/tools/tool_visibility.py`:
-- PUBLIC_SKILLS - публичные навыки (видимы модели)
-- INTERNAL_PRIMITIVES - внутренние примитивы (скрыты)
-- RECOVERY_TOOLS - инструменты восстановления (только для recovery)
+### Приоритет 9 - Memory Enhancement
+- Hierarchical memory: дерево памяти с приоритетами
+- Memory decay: "забывание" устаревшей информации
+- Memory consolidation: периодическое обобщение памяти
+- Semantic search: векторный поиск по памяти
 
-## Приоритет 6 - Push-to-talk
+### Приоритет 10 - Multi-modal Reasoning
+- Vision reasoning: анализ экрана + выполнение действий
+- OCR integration: распознавание текста + последующее действие
+- Screenshot analysis: понимание UI через изображения
+- Visual planning: планирование на основе визуального контекста
 
-(После стабилизации Core)
+### Приоритет 11 - Tool Composition
+- Tool chains: автоматическое цепление инструментов
+- Conditional execution: if-then логика для инструментов
+- Tool synthesis: создание новых инструментов из существующих
+- Parallel execution: параллельный запуск независимых инструментов
+
+### Приоритет 12 - Recovery & Self-healing
+- Automatic rollback: откат при неудачах
+- Alternative paths: поиск альтернативных решений
+- Graceful degradation: работа в упрощенном режиме
+- Self-diagnostics: диагностика самого агента
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 296 passed
+python -m pytest tests/ -q  # 304 passed
