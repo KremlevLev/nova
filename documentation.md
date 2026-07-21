@@ -13,6 +13,10 @@
 - **Приоритет 5 - Tool Visibility** - создан `modules/tools/tool_visibility.py`
 - **Clean up main.py** - удалено дублирование `resolved_request`
 - **Приоритет 7 - Reasoning Loop** - создан `modules/agent/reasoning.py` + тесты
+- **Приоритет 11 - Tool Composition** - создан `modules/tools/composition.py`:
+  - ToolChain и ToolChainStep для цепочек инструментов
+  - ToolComposer для выполнения цепочек
+  - Параллельное выполнение через `run_parallel()` в ReasoningLoop
 
 ## Текущие задачи
 
@@ -49,12 +53,6 @@
 - Screenshot analysis: понимание UI через изображения
 - Visual planning: планирование на основе визуального контекста
 
-### Приоритет 11 - Tool Composition
-- Tool chains: автоматическое цепление инструментов
-- Conditional execution: if-then логика для инструментов
-- Tool synthesis: создание новых инструментов из существующих
-- Parallel execution: параллельный запуск независимых инструментов
-
 ### Приоритет 12 - Recovery & Self-healing
 - Automatic rollback: откат при неудачах
 - Alternative paths: поиск альтернативных решений
@@ -63,4 +61,4 @@
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 304 passed
+python -m pytest tests/ -q  # 315 passed
