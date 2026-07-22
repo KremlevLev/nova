@@ -21,6 +21,7 @@ def _get_env_tokens() -> dict[str, str]:
         "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
         "SLACK_TOKEN": os.environ.get("SLACK_TOKEN", ""),
         "GOOGLE_DRIVE_TOKEN": os.environ.get("GOOGLE_DRIVE_TOKEN", ""),
+        "JIRA_TOKEN": os.environ.get("JIRA_TOKEN", ""),
     }
 
 
@@ -151,6 +152,12 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "env": {},  # No token required for local git operations
         "enabled": True,  # Always enabled for git operations
     },
+    "jira": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-jira"],
+        "env": {},  # Will be populated from JIRA_TOKEN env var
+        "enabled": False,  # Will be True if JIRA_TOKEN is available
+    },
 }
 
 
@@ -169,6 +176,7 @@ async def bootstrap_mcp_from_defaults(
     - Gdrive: enabled if GOOGLE_DRIVE_TOKEN is set
     - Postgres: enabled if MCP_POSTGRES_CONNECTION is set
     - Git: always enabled
+    - Jira: enabled if JIRA_TOKEN is set
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()
@@ -190,6 +198,8 @@ async def bootstrap_mcp_from_defaults(
             should_enable = True
         elif name == "postgres" and postgres_conn:
             should_enable = True
+        elif name == "jira" and env_tokens.get("JIRA_TOKEN"):
+            should_enable = True
         
         if should_enable:
             # Build env dict from server config + environment tokens
@@ -202,6 +212,8 @@ async def bootstrap_mcp_from_defaults(
                 env["GOOGLE_DRIVE_TOKEN"] = env_tokens["GOOGLE_DRIVE_TOKEN"]
             if name == "postgres" and postgres_conn:
                 env["MCP_POSTGRES_CONNECTION"] = postgres_conn
+            if name == "jira" and env_tokens.get("JIRA_TOKEN"):
+                env["JIRA_TOKEN"] = env_tokens["JIRA_TOKEN"]
             
             # Build args for SQLite with path
             args = server_config["args"].copy()

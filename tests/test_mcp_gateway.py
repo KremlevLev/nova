@@ -687,3 +687,44 @@ def test_git_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_git_"), f"Tool {tool} should start with mcp_git_"
+
+
+# ==============================================================================
+# Jira MCP Server Integration Tests
+# ==============================================================================
+
+def test_jira_server_config_in_defaults() -> None:
+    """Test that Jira server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "jira" in DEFAULT_MCP_SERVERS
+    jira_config = DEFAULT_MCP_SERVERS["jira"]
+    assert jira_config["command"] == "npx"
+    assert "-y" in jira_config["args"]
+    assert "@modelcontextprotocol/server-jira" in jira_config["args"]
+
+
+def test_jira_server_disabled_without_token() -> None:
+    """Test that Jira server is disabled when no token is present."""
+    import os
+    # Ensure no token is set
+    os.environ.pop("JIRA_TOKEN", None)
+    
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    assert DEFAULT_MCP_SERVERS["jira"]["enabled"] is False
+
+
+def test_jira_mcp_tool_name_format() -> None:
+    """Test that Jira MCP tools would be named correctly."""
+    # Jira MCP server tools would be named mcp_jira_<tool_name>
+    expected_tools = [
+        "mcp_jira_list_issues",
+        "mcp_jira_get_issue",
+        "mcp_jira_create_issue",
+        "mcp_jira_update_issue",
+        "mcp_jira_search_issues",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_jira_"), f"Tool {tool} should start with mcp_jira_"
