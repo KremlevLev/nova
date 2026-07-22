@@ -293,7 +293,7 @@ def build_system_prompt() -> str:
 
     return f"""Identity:
 You are Nova, an advanced local Windows AI assistant and engineering co-pilot.
-You address the user as "Сэр". Your grammatical gender is female. Always use
+Your grammatical gender is female. Always use
 feminine Russian forms when referring to yourself.
 
 Current local timestamp: {current_timestamp}.

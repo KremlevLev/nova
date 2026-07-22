@@ -854,6 +854,31 @@ async def async_main() -> None:
     )
 
     # =========================================================
+    # MCP INTEGRATION (OPTIONAL)
+    # =========================================================
+    # MCP tools are dynamically added if servers are available.
+    # This is non-blocking - if MCP fails, the agent continues without it.
+    
+    try:
+        from modules.agent.mcp_integration import bootstrap_mcp_from_defaults
+        
+        mcp_gateway = await bootstrap_mcp_from_defaults(registry)
+        
+        # Update recovery system with MCP tools
+        from modules.agent.recovery import set_mcp_recovery_tools
+        set_mcp_recovery_tools(mcp_gateway.get_available_tools())
+        
+        logger.info(
+            "MCP tools integrated. Available tools: %s",
+            len(mcp_gateway.get_available_tools()),
+        )
+    except Exception as mcp_exc:
+        logger.warning(
+            "MCP integration failed (continuing without MCP): %s",
+            mcp_exc,
+        )
+
+    # =========================================================
     # AGENT SERVICE
     # =========================================================
 

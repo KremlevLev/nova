@@ -12,11 +12,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import subprocess
+import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from modules.domain.results import ToolResult
+from modules.tools.base import ToolCategory, RiskLevel
 
 logger = logging.getLogger("MCPGateway")
 
@@ -29,19 +30,21 @@ class MCPServerConfig:
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
+    transport: str = "stdio"  # stdio or sse
 
 
 class MCPGateway:
     """
     Gateway for connecting to MCP servers.
     
-    Supports stdio-based MCP servers for tool integration.
+    Supports stdio and SSE transports for tool integration.
     Discovers tools and provides them for recovery operations.
     """
     
     def __init__(self) -> None:
         self._servers: dict[str, MCPServerConfig] = {}
         self._tool_schemas: dict[str, dict[str, Any]] = {}
+        self._handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
     
     def register_server(
@@ -238,6 +241,48 @@ class MCPGateway:
     def get_available_tools(self) -> set[str]:
         """Get set of available MCP tool names."""
         return set(self._tool_schemas.keys())
+    
+    async def register_with_registry(
+        self,
+        registry: Any,
+    ) -> int:
+        """
+        Register MCP tools with ToolRegistry.
+        
+        Returns number of tools registered.
+        """
+        count = 0
+        for tool_name, schema in self._tool_schemas.items():
+            try:
+                # Create sync handler wrapper that calls async method via asyncio
+                def make_handler(name: str) -> Callable[..., Any]:
+                    def handler(**kwargs) -> ToolResult:
+                        return asyncio.run(self.call_tool(name, kwargs))
+                    return handler
+                
+                self._handlers[tool_name] = make_handler(tool_name)
+                
+                # Register with registry
+                registry.register(
+                    schema={
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "description": schema.get("description", ""),
+                            "parameters": schema.get("parameters", {
+                                "type": "object",
+                                "properties": {},
+                            }),
+                        },
+                    },
+                    handler=self._handlers[tool_name],
+                )
+                count += 1
+            except ValueError:
+                # Tool already registered
+                pass
+        
+        return count
 
 
 # Pre-defined MCP server configurations for recovery

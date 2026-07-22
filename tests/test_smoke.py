@@ -433,3 +433,33 @@ def test_wake_word_import() -> None:
     assert WakeWordRuntime is not None
     assert WakeWordDetector is not None
     assert strip_wake_prefix is not None
+
+
+def test_mcp_gateway_import() -> None:
+    """Проверяет импорт MCP Gateway."""
+    from modules.agent.mcp_gateway import (
+        MCPGateway,
+        MCPServerConfig,
+    )
+    from modules.agent.mcp_integration import (
+        bootstrap_mcp_from_defaults,
+    )
+
+    assert MCPGateway is not None
+    assert MCPServerConfig is not None
+    assert bootstrap_mcp_from_defaults is not None
+
+
+def test_recovery_mcp_import() -> None:
+    """Проверяет импорт MCP recovery компонентов."""
+    from modules.agent.recovery import (
+        SelfDiagnostics,
+        GracefulDegradation,
+        set_mcp_recovery_tools,
+        get_mcp_recovery_tools,
+    )
+
+    assert SelfDiagnostics is not None
+    assert GracefulDegradation is not None
+    assert set_mcp_recovery_tools is not None
+    assert get_mcp_recovery_tools is not None
