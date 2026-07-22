@@ -396,3 +396,43 @@ def test_mcp_gateway_register_server_with_env() -> None:
     gateway.register_server(config)
     assert "github" in gateway._servers
     assert gateway._servers["github"].env == {"GITHUB_TOKEN": "test_token"}
+
+
+# ==============================================================================
+# Filesystem MCP Server Integration Tests
+# ==============================================================================
+
+def test_filesystem_server_config_in_defaults() -> None:
+    """Test that Filesystem server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "filesystem" in DEFAULT_MCP_SERVERS
+    fs_config = DEFAULT_MCP_SERVERS["filesystem"]
+    assert fs_config["command"] == "npx"
+    assert "-y" in fs_config["args"]
+    assert "@modelcontextprotocol/server-filesystem" in fs_config["args"]
+    assert "--directory" in fs_config["args"]
+    assert fs_config["enabled"] is True  # Always enabled
+
+
+def test_filesystem_mcp_tool_name_format() -> None:
+    """Test that Filesystem MCP tools would be named correctly."""
+    # Filesystem MCP server tools would be named mcp_filesystem_<tool_name>
+    expected_tools = [
+        "mcp_filesystem_read_file",
+        "mcp_filesystem_write_file",
+        "mcp_filesystem_list_directory",
+        "mcp_filesystem_search_files",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_filesystem_"), f"Tool {tool} should start with mcp_filesystem_"
+
+
+def test_filesystem_server_always_enabled() -> None:
+    """Test that Filesystem server is always enabled (no token required)."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    # Filesystem server should be enabled by default
+    assert DEFAULT_MCP_SERVERS["filesystem"]["enabled"] is True

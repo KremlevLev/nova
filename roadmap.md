@@ -21,6 +21,7 @@
 - [x] **Приоритет 11 - Tool Composition** - создан modules/tools/composition.py
 - [x] **Приоритет 8, часть 1 - Research Synthesis** - создан modules/tools/synthesis.py
 - [x] **GitHub MCP Server**: автоматическое подключение при наличии GITHUB_TOKEN в .env
+- [x] **Filesystem MCP Server**: встроен в DEFAULT_MCP_SERVERS, всегда включён
 
 ## Текущие задачи
 
@@ -96,14 +97,14 @@
 - ✅ **Self-diagnostics**: `SelfDiagnostics` класс для диагностики агента (database, storage, memory, filesystem, process_manager, model_gateway, mcp_servers)
 - ✅ Создан modules/agent/mcp_gateway.py
 - ✅ Созданы SelfDiagnostics и GracefulDegradation в modules/agent/recovery.py
-- ✅ Написаны тесты tests/test_mcp_gateway.py (27 passed)
+- ✅ Написаны тесты tests/test_mcp_gateway.py (30 passed)
 
 ## MCP Integration Roadmap
 
 ### MCP Servers to Integrate
 
 - [x] GitHub MCP Server - управление репозиториями, issues, PR через `@modelcontextprotocol/server-github`
-- [ ] Filesystem MCP Server - работа с файлами через `@modelcontextprotocol/server-filesystem`
+- [x] Filesystem MCP Server - работа с файлами через `@modelcontextprotocol/server-filesystem`
 - [ ] SQLite MCP Server - запросы к базе данных через `@modelcontextprotocol/server-sqlite`
 - [ ] Slack MCP Server - интеграция с Slack через `@modelcontextprotocol/server-slack`
 - [ ] Google Drive MCP Server - работа с документами через `@modelcontextprotocol/server-gdrive`
@@ -119,6 +120,7 @@
 - [x] MCP tools registration с ToolRegistry support
 - [x] MCP tool call error handling
 - [x] **GitHub MCP Server**: автоматическое подключение при наличии GITHUB_TOKEN в .env
+- [x] **Filesystem MCP Server**: встроен в DEFAULT_MCP_SERVERS, всегда включён
 - [ ] Добавить SSE транспорт в MCPGateway (для удаленных серверов)
 - [ ] MCP-пул соединений для переиспользования процессов
 - [ ] Автоматическое обнаружение и подключение к localhost MCP серверам
@@ -130,7 +132,7 @@
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 27 mcp_gateway tests passed + все остальные
+python -m pytest tests/ -q  # 30 mcp_gateway tests passed + все остальные
 
 # КОНТЕКСТ ПРОЕКТА
 - Ты помогаешь мне развивать моего кастомного ИИ-агента.
