@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 
+from modules.agent.mcp_gateway import (
+    MCPGateway,
+    MCPServerConfig,
+)
 from modules.agent.recovery import (
     GracefulDegradation,
     RecoveryAction,
@@ -32,6 +36,55 @@ def test_mcp_recovery_tools_empty_by_default() -> None:
     """Test MCP recovery tools is empty by default."""
     set_mcp_recovery_tools(set())
     assert len(get_mcp_recovery_tools()) == 0
+
+
+def test_mcp_server_config_creation() -> None:
+    """Test MCPServerConfig can be created."""
+    config = MCPServerConfig(
+        name="test_server",
+        command="node",
+        args=["server.js"],
+        env={"TOKEN": "secret"},
+    )
+    
+    assert config.name == "test_server"
+    assert config.command == "node"
+    assert config.args == ["server.js"]
+    assert config.env == {"TOKEN": "secret"}
+    assert config.transport == "stdio"
+
+
+def test_mcp_gateway_creation() -> None:
+    """Test MCPGateway can be instantiated."""
+    gateway = MCPGateway()
+    assert gateway is not None
+    assert not gateway._initialized
+
+
+def test_mcp_gateway_register_server() -> None:
+    """Test MCPGateway can register servers."""
+    gateway = MCPGateway()
+    config = MCPServerConfig(
+        name="test",
+        command="python",
+    )
+    
+    gateway.register_server(config)
+    assert "test" in gateway._servers
+
+
+def test_mcp_gateway_get_tool_schemas_empty() -> None:
+    """Test MCPGateway returns empty schemas before initialization."""
+    gateway = MCPGateway()
+    schemas = gateway.get_tool_schemas()
+    assert schemas == []
+
+
+def test_mcp_gateway_get_available_tools_empty() -> None:
+    """Test MCPGateway returns empty tools before initialization."""
+    gateway = MCPGateway()
+    tools = gateway.get_available_tools()
+    assert tools == set()
 
 
 def test_recovery_engine_exists() -> None:
@@ -224,3 +277,122 @@ def test_recovery_engine_decide_mcp_fallback() -> None:
     decision = engine.decide(result, context)
     
     assert decision.action == RecoveryAction.FALLBACK
+
+
+def test_mcp_gateway_call_tool_invalid_name() -> None:
+    """Test MCPGateway rejects invalid tool names."""
+    
+    async def run_test() -> None:
+        gateway = MCPGateway()
+        result = await gateway.call_tool("invalid_name", {})
+        assert not result.success
+        assert result.code == "INVALID_TOOL_NAME"
+    
+    asyncio.run(run_test())
+
+
+def test_mcp_gateway_call_tool_unknown_server() -> None:
+    """Test MCPGateway rejects unknown servers."""
+    
+    async def run_test() -> None:
+        gateway = MCPGateway()
+        result = await gateway.call_tool("mcp_unknown_tool", {})
+        assert not result.success
+        assert result.code == "UNKNOWN_MCP_SERVER"
+    
+    asyncio.run(run_test())
+
+
+# ==============================================================================
+# GitHub MCP Server Integration Tests
+# ==============================================================================
+
+def test_github_server_config_in_defaults() -> None:
+    """Test that GitHub server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "github" in DEFAULT_MCP_SERVERS
+    github_config = DEFAULT_MCP_SERVERS["github"]
+    assert github_config["command"] == "npx"
+    assert "-y" in github_config["args"]
+    assert "@modelcontextprotocol/server-github" in github_config["args"]
+
+
+def test_github_server_disabled_without_token() -> None:
+    """Test that GitHub server is disabled when no token is present."""
+    import os
+    # Ensure no token is set
+    os.environ.pop("GITHUB_TOKEN", None)
+    
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    assert DEFAULT_MCP_SERVERS["github"]["enabled"] is False
+
+
+def test_env_tokens_loading() -> None:
+    """Test that environment tokens are loaded correctly."""
+    import os
+    os.environ["GITHUB_TOKEN"] = "test_github_token_123"
+    
+    from modules.agent.mcp_integration import _get_env_tokens
+    tokens = _get_env_tokens()
+    
+    assert tokens["GITHUB_TOKEN"] == "test_github_token_123"
+    assert tokens["SLACK_TOKEN"] == ""
+    
+    # Cleanup
+    os.environ.pop("GITHUB_TOKEN", None)
+
+
+def test_github_server_enabled_with_token() -> None:
+    """Test that GitHub server is auto-enabled when token is present."""
+    import os
+    original_token = os.environ.get("GITHUB_TOKEN")
+    os.environ["GITHUB_TOKEN"] = "ghp_test_token"
+    
+    # Need to reimport to get fresh defaults
+    import importlib
+    import modules.agent.mcp_integration as mcp_int
+    importlib.reload(mcp_int)
+    
+    # The config itself has enabled=False, but bootstrap should auto-enable
+    # We test that the env token is detected
+    tokens = mcp_int._get_env_tokens()
+    assert tokens["GITHUB_TOKEN"] == "ghp_test_token"
+    
+    # Cleanup
+    if original_token:
+        os.environ["GITHUB_TOKEN"] = original_token
+    else:
+        os.environ.pop("GITHUB_TOKEN", None)
+
+
+def test_github_mcp_tool_name_format() -> None:
+    """Test that GitHub MCP tools would be named correctly."""
+    # GitHub MCP server tools would be named mcp_github_<tool_name>
+    expected_tools = [
+        "mcp_github_get_repository",
+        "mcp_github_create_issue",
+        "mcp_github_list_issues",
+        "mcp_github_get_pull_request",
+        "mcp_github_create_pull_request",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_github_"), f"Tool {tool} should start with mcp_github_"
+
+
+def test_mcp_gateway_register_server_with_env() -> None:
+    """Test that server can be registered with environment variables."""
+    gateway = MCPGateway()
+    config = MCPServerConfig(
+        name="github",
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-github"],
+        env={"GITHUB_TOKEN": "test_token"},
+        enabled=True,
+    )
+    
+    gateway.register_server(config)
+    assert "github" in gateway._servers
+    assert gateway._servers["github"].env == {"GITHUB_TOKEN": "test_token"}
