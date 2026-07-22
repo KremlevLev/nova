@@ -121,6 +121,12 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "env": {},  # Will be populated from SLACK_TOKEN env var
         "enabled": False,  # Will be True if SLACK_TOKEN is available
     },
+    "websearch": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-web-search"],
+        "env": {},  # No token required for basic web search
+        "enabled": True,  # Always enabled for web search capability
+    },
 }
 
 
@@ -135,6 +141,7 @@ async def bootstrap_mcp_from_defaults(
     - Filesystem: always enabled
     - SQLite: enabled if MCP_SQLITE_PATH is set
     - Slack: enabled if SLACK_TOKEN is set
+    - Websearch: always enabled
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()

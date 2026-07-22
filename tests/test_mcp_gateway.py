@@ -530,3 +530,40 @@ def test_slack_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_slack_"), f"Tool {tool} should start with mcp_slack_"
+
+
+# ==============================================================================
+# Web Search MCP Server Integration Tests
+# ==============================================================================
+
+def test_websearch_server_config_in_defaults() -> None:
+    """Test that Web Search server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "websearch" in DEFAULT_MCP_SERVERS
+    websearch_config = DEFAULT_MCP_SERVERS["websearch"]
+    assert websearch_config["command"] == "npx"
+    assert "-y" in websearch_config["args"]
+    assert "@modelcontextprotocol/server-web-search" in websearch_config["args"]
+
+
+def test_websearch_server_always_enabled() -> None:
+    """Test that Web Search server is always enabled (no token required)."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    # Websearch server should be enabled by default
+    assert DEFAULT_MCP_SERVERS["websearch"]["enabled"] is True
+
+
+def test_websearch_mcp_tool_name_format() -> None:
+    """Test that Web Search MCP tools would be named correctly."""
+    # Web Search MCP server tools would be named mcp_websearch_<tool_name>
+    expected_tools = [
+        "mcp_websearch_search",
+        "mcp_websearch_search_pages",
+        "mcp_websearch_get_page_content",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_websearch_"), f"Tool {tool} should start with mcp_websearch_"
