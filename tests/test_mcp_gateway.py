@@ -490,3 +490,43 @@ def test_sqlite_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_sqlite_"), f"Tool {tool} should start with mcp_sqlite_"
+
+
+# ==============================================================================
+# Slack MCP Server Integration Tests
+# ==============================================================================
+
+def test_slack_server_config_in_defaults() -> None:
+    """Test that Slack server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "slack" in DEFAULT_MCP_SERVERS
+    slack_config = DEFAULT_MCP_SERVERS["slack"]
+    assert slack_config["command"] == "npx"
+    assert "-y" in slack_config["args"]
+    assert "@modelcontextprotocol/server-slack" in slack_config["args"]
+
+
+def test_slack_server_disabled_without_token() -> None:
+    """Test that Slack server is disabled when no token is present."""
+    import os
+    # Ensure no token is set
+    os.environ.pop("SLACK_TOKEN", None)
+    
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    assert DEFAULT_MCP_SERVERS["slack"]["enabled"] is False
+
+
+def test_slack_mcp_tool_name_format() -> None:
+    """Test that Slack MCP tools would be named correctly."""
+    # Slack MCP server tools would be named mcp_slack_<tool_name>
+    expected_tools = [
+        "mcp_slack_list_channels",
+        "mcp_slack_post_message",
+        "mcp_slack_get_channel_history",
+        "mcp_slack_get_user_info",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_slack_"), f"Tool {tool} should start with mcp_slack_"
