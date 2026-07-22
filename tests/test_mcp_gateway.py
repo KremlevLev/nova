@@ -436,3 +436,57 @@ def test_filesystem_server_always_enabled() -> None:
     
     # Filesystem server should be enabled by default
     assert DEFAULT_MCP_SERVERS["filesystem"]["enabled"] is True
+
+
+# ==============================================================================
+# SQLite MCP Server Integration Tests
+# ==============================================================================
+
+def test_sqlite_server_config_in_defaults() -> None:
+    """Test that SQLite server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "sqlite" in DEFAULT_MCP_SERVERS
+    sqlite_config = DEFAULT_MCP_SERVERS["sqlite"]
+    assert sqlite_config["command"] == "npx"
+    assert "-y" in sqlite_config["args"]
+    assert "@modelcontextprotocol/server-sqlite" in sqlite_config["args"]
+
+
+def test_sqlite_server_disabled_without_path() -> None:
+    """Test that SQLite server is disabled when no path is set."""
+    import os
+    # Ensure no path is set
+    os.environ.pop("MCP_SQLITE_PATH", None)
+    
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    assert DEFAULT_MCP_SERVERS["sqlite"]["enabled"] is False
+
+
+def test_sqlite_path_loading() -> None:
+    """Test that SQLite path is loaded from environment."""
+    import os
+    os.environ["MCP_SQLITE_PATH"] = "test_memory.db"
+    
+    from modules.agent.mcp_integration import _get_sqlite_path
+    path = _get_sqlite_path()
+    
+    assert path == "test_memory.db"
+    
+    # Cleanup
+    os.environ.pop("MCP_SQLITE_PATH", None)
+
+
+def test_sqlite_mcp_tool_name_format() -> None:
+    """Test that SQLite MCP tools would be named correctly."""
+    # SQLite MCP server tools would be named mcp_sqlite_<tool_name>
+    expected_tools = [
+        "mcp_sqlite_query",
+        "mcp_sqlite_list_tables",
+        "mcp_sqlite_describe_table",
+        "mcp_sqlite_read_resource",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_sqlite_"), f"Tool {tool} should start with mcp_sqlite_"

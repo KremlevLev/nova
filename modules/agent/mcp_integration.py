@@ -2,7 +2,7 @@
 """MCP Integration Bootstrap.
 
 Connects MCP servers and registers their tools with the existing tool registry.
-Supports environment-based configuration for tokens.
+Supports environment-based configuration for tokens and database paths.
 """
 from __future__ import annotations
 
@@ -21,6 +21,11 @@ def _get_env_tokens() -> dict[str, str]:
         "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
         "SLACK_TOKEN": os.environ.get("SLACK_TOKEN", ""),
     }
+
+
+def _get_sqlite_path() -> str:
+    """Get SQLite database path from environment."""
+    return os.environ.get("MCP_SQLITE_PATH", "nova_memory.db")
 
 
 async def initialize_mcp_servers(
@@ -108,13 +113,13 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-sqlite"],
         "env": {},
-        "enabled": False,  # Enable when database is available
+        "enabled": False,  # Will be True if MCP_SQLITE_PATH is set
     },
     "slack": {
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-slack"],
         "env": {},  # Will be populated from SLACK_TOKEN env var
-        "enabled": False,  # Enable when SLACK_TOKEN is available
+        "enabled": False,  # Will be True if SLACK_TOKEN is available
     },
 }
 
@@ -128,11 +133,12 @@ async def bootstrap_mcp_from_defaults(
     Automatically enables servers based on available environment tokens.
     - GitHub: enabled if GITHUB_TOKEN is set
     - Filesystem: always enabled
-    - SQLite: enabled if SQLite database path is configured
+    - SQLite: enabled if MCP_SQLITE_PATH is set
     - Slack: enabled if SLACK_TOKEN is set
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()
+    sqlite_path = _get_sqlite_path()
     
     for name, server_config in DEFAULT_MCP_SERVERS.items():
         # Determine if server should be enabled
@@ -143,6 +149,8 @@ async def bootstrap_mcp_from_defaults(
             should_enable = True
         elif name == "slack" and env_tokens.get("SLACK_TOKEN"):
             should_enable = True
+        elif name == "sqlite" and os.environ.get("MCP_SQLITE_PATH"):
+            should_enable = True
         
         if should_enable:
             # Build env dict from server config + environment tokens
@@ -152,13 +160,19 @@ async def bootstrap_mcp_from_defaults(
             if name == "slack" and env_tokens.get("SLACK_TOKEN"):
                 env["SLACK_TOKEN"] = env_tokens["SLACK_TOKEN"]
             
+            # Build args for SQLite with path
+            args = server_config["args"].copy()
+            if name == "sqlite" and os.environ.get("MCP_SQLITE_PATH"):
+                # Add --db-path argument for SQLite server
+                args.extend(["--db-path", sqlite_path])
+            
             # Merge with any existing env from config
             env.update(server_config.get("env", {}))
             
             config_obj = MCPServerConfig(
                 name=name,
                 command=server_config["command"],
-                args=server_config["args"],
+                args=args,
                 env=env,
                 enabled=True,
             )
