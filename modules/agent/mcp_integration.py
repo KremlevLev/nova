@@ -145,6 +145,12 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "env": {},  # Will be populated from MCP_POSTGRES_CONNECTION env var
         "enabled": False,  # Will be True if MCP_POSTGRES_CONNECTION is set
     },
+    "git": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-git"],
+        "env": {},  # No token required for local git operations
+        "enabled": True,  # Always enabled for git operations
+    },
 }
 
 
@@ -162,6 +168,7 @@ async def bootstrap_mcp_from_defaults(
     - Websearch: always enabled
     - Gdrive: enabled if GOOGLE_DRIVE_TOKEN is set
     - Postgres: enabled if MCP_POSTGRES_CONNECTION is set
+    - Git: always enabled
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()

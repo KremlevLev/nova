@@ -648,3 +648,42 @@ def test_postgres_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_postgres_"), f"Tool {tool} should start with mcp_postgres_"
+
+
+# ==============================================================================
+# Git MCP Server Integration Tests
+# ==============================================================================
+
+def test_git_server_config_in_defaults() -> None:
+    """Test that Git server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "git" in DEFAULT_MCP_SERVERS
+    git_config = DEFAULT_MCP_SERVERS["git"]
+    assert git_config["command"] == "npx"
+    assert "-y" in git_config["args"]
+    assert "@modelcontextprotocol/server-git" in git_config["args"]
+
+
+def test_git_server_always_enabled() -> None:
+    """Test that Git server is always enabled (no token required)."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    # Git server should be enabled by default
+    assert DEFAULT_MCP_SERVERS["git"]["enabled"] is True
+
+
+def test_git_mcp_tool_name_format() -> None:
+    """Test that Git MCP tools would be named correctly."""
+    # Git MCP server tools would be named mcp_git_<tool_name>
+    expected_tools = [
+        "mcp_git_status",
+        "mcp_git_log",
+        "mcp_git_diff",
+        "mcp_git_branch",
+        "mcp_git_commit",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_git_"), f"Tool {tool} should start with mcp_git_"
