@@ -20,6 +20,7 @@ def _get_env_tokens() -> dict[str, str]:
     return {
         "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
         "SLACK_TOKEN": os.environ.get("SLACK_TOKEN", ""),
+        "GOOGLE_DRIVE_TOKEN": os.environ.get("GOOGLE_DRIVE_TOKEN", ""),
     }
 
 
@@ -127,6 +128,12 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "env": {},  # No token required for basic web search
         "enabled": True,  # Always enabled for web search capability
     },
+    "gdrive": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-gdrive"],
+        "env": {},  # Will be populated from GOOGLE_DRIVE_TOKEN env var
+        "enabled": False,  # Will be True if GOOGLE_DRIVE_TOKEN is available
+    },
 }
 
 
@@ -142,6 +149,7 @@ async def bootstrap_mcp_from_defaults(
     - SQLite: enabled if MCP_SQLITE_PATH is set
     - Slack: enabled if SLACK_TOKEN is set
     - Websearch: always enabled
+    - Gdrive: enabled if GOOGLE_DRIVE_TOKEN is set
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()
@@ -158,6 +166,8 @@ async def bootstrap_mcp_from_defaults(
             should_enable = True
         elif name == "sqlite" and os.environ.get("MCP_SQLITE_PATH"):
             should_enable = True
+        elif name == "gdrive" and env_tokens.get("GOOGLE_DRIVE_TOKEN"):
+            should_enable = True
         
         if should_enable:
             # Build env dict from server config + environment tokens
@@ -166,6 +176,8 @@ async def bootstrap_mcp_from_defaults(
                 env["GITHUB_TOKEN"] = env_tokens["GITHUB_TOKEN"]
             if name == "slack" and env_tokens.get("SLACK_TOKEN"):
                 env["SLACK_TOKEN"] = env_tokens["SLACK_TOKEN"]
+            if name == "gdrive" and env_tokens.get("GOOGLE_DRIVE_TOKEN"):
+                env["GOOGLE_DRIVE_TOKEN"] = env_tokens["GOOGLE_DRIVE_TOKEN"]
             
             # Build args for SQLite with path
             args = server_config["args"].copy()

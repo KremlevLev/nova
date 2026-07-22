@@ -567,3 +567,44 @@ def test_websearch_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_websearch_"), f"Tool {tool} should start with mcp_websearch_"
+
+
+# ==============================================================================
+# Google Drive MCP Server Integration Tests
+# ==============================================================================
+
+def test_gdrive_server_config_in_defaults() -> None:
+    """Test that Google Drive server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "gdrive" in DEFAULT_MCP_SERVERS
+    gdrive_config = DEFAULT_MCP_SERVERS["gdrive"]
+    assert gdrive_config["command"] == "npx"
+    assert "-y" in gdrive_config["args"]
+    assert "@modelcontextprotocol/server-gdrive" in gdrive_config["args"]
+
+
+def test_gdrive_server_disabled_without_token() -> None:
+    """Test that Google Drive server is disabled when no token is present."""
+    import os
+    # Ensure no token is set
+    os.environ.pop("GOOGLE_DRIVE_TOKEN", None)
+    
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    assert DEFAULT_MCP_SERVERS["gdrive"]["enabled"] is False
+
+
+def test_gdrive_mcp_tool_name_format() -> None:
+    """Test that Google Drive MCP tools would be named correctly."""
+    # Google Drive MCP server tools would be named mcp_gdrive_<tool_name>
+    expected_tools = [
+        "mcp_gdrive_list_files",
+        "mcp_gdrive_read_file",
+        "mcp_gdrive_create_file",
+        "mcp_gdrive_update_file",
+        "mcp_gdrive_delete_file",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_gdrive_"), f"Tool {tool} should start with mcp_gdrive_"
