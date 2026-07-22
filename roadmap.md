@@ -23,6 +23,7 @@
 - [x] **GitHub MCP Server**: автоматическое подключение при наличии GITHUB_TOKEN в .env
 - [x] **Filesystem MCP Server**: встроен в DEFAULT_MCP_SERVERS, всегда включён
 - [x] **SQLite MCP Server**: поддержка MCP_SQLITE_PATH для указания пути к базе
+- [x] **Slack MCP Server**: автоматическое подключение при наличии SLACK_TOKEN в .env
 
 ## Текущие задачи
 
@@ -98,7 +99,7 @@
 - ✅ **Self-diagnostics**: `SelfDiagnostics` класс для диагностики агента (database, storage, memory, filesystem, process_manager, model_gateway, mcp_servers)
 - ✅ Создан modules/agent/mcp_gateway.py
 - ✅ Созданы SelfDiagnostics и GracefulDegradation в modules/agent/recovery.py
-- ✅ Написаны тесты tests/test_mcp_gateway.py (34 passed)
+- ✅ Написаны тесты tests/test_mcp_gateway.py (37 passed)
 
 ## MCP Integration Roadmap
 
@@ -107,7 +108,7 @@
 - [x] GitHub MCP Server - управление репозиториями, issues, PR через `@modelcontextprotocol/server-github`
 - [x] Filesystem MCP Server - работа с файлами через `@modelcontextprotocol/server-filesystem`
 - [x] SQLite MCP Server - запросы к базе данных через `@modelcontextprotocol/server-sqlite`
-- [ ] Slack MCP Server - интеграция с Slack через `@modelcontextprotocol/server-slack`
+- [x] Slack MCP Server - интеграция с Slack через `@modelcontextprotocol/server-slack`
 - [ ] Google Drive MCP Server - работа с документами через `@modelcontextprotocol/server-gdrive`
 - [ ] PostgreSQL MCP Server - подключение к PostgreSQL
 - [ ] Web Search MCP Server - поиск в интернете
@@ -123,6 +124,7 @@
 - [x] **GitHub MCP Server**: автоматическое подключение при наличии GITHUB_TOKEN в .env
 - [x] **Filesystem MCP Server**: встроен в DEFAULT_MCP_SERVERS, всегда включён
 - [x] **SQLite MCP Server**: поддержка MCP_SQLITE_PATH для указания пути к базе
+- [x] **Slack MCP Server**: автоматическое подключение при наличии SLACK_TOKEN в .env
 - [ ] Добавить SSE транспорт в MCPGateway (для удаленных серверов)
 - [ ] MCP-пул соединений для переиспользования процессов
 - [ ] Автоматическое обнаружение и подключение к localhost MCP серверам
@@ -134,7 +136,7 @@
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 34 mcp_gateway tests passed + все остальные
+python -m pytest tests/ -q  # 37 mcp_gateway tests passed + все остальные
 
 # КОНТЕКСТ ПРОЕКТА
 - Ты помогаешь мне развивать моего кастомного ИИ-агента.
