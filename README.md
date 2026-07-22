@@ -101,6 +101,35 @@ python -m main
 
 ---
 
+## 🔌 MCP Integration
+
+Nova поддерживает подключение к внешним MCP (Model Context Protocol) серверам для расширения возможностей:
+
+| Сервер | Описание | Требует токен |
+|--------|----------|---------------|
+| GitHub | Управление репозиториями, issues, PR | `GITHUB_TOKEN` |
+| Filesystem | Работа с файлами | Нет (встроен) |
+| SQLite | Запросы к базе данных | `MCP_SQLITE_PATH` |
+| Slack | Интеграция с Slack | `SLACK_TOKEN` |
+| Web Search | Поиск в интернете | Нет (встроен) |
+
+**Настройка в .env:**
+```env
+# MCP Servers
+GITHUB_TOKEN=ghp_ваш_токен
+SLACK_TOKEN=xoxb-ваш_токен
+MCP_SQLITE_PATH=nova_memory.db
+```
+
+**Доступные инструменты:**
+- `mcp_github_*` — управление GitHub (issues, PR, репозитории)
+- `mcp_filesystem_*` — чтение/запись файлов, поиск
+- `mcp_sqlite_*` — SQL запросы, работа с таблицами
+- `mcp_slack_*` — каналы, сообщения, пользователи
+- `mcp_websearch_*` — поиск в интернете
+
+---
+
 ## 📋 Полный список команд
 
 ### Быстрые команды (без обращения к LLM)
@@ -299,6 +328,3 @@ python -m pytest -v
 ## 📄 Лицензия
 
 [MIT](LICENSE)
-```
-
----
