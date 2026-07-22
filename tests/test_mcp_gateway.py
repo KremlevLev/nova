@@ -608,3 +608,43 @@ def test_gdrive_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_gdrive_"), f"Tool {tool} should start with mcp_gdrive_"
+
+
+# ==============================================================================
+# PostgreSQL MCP Server Integration Tests
+# ==============================================================================
+
+def test_postgres_server_config_in_defaults() -> None:
+    """Test that PostgreSQL server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "postgres" in DEFAULT_MCP_SERVERS
+    postgres_config = DEFAULT_MCP_SERVERS["postgres"]
+    assert postgres_config["command"] == "npx"
+    assert "-y" in postgres_config["args"]
+    assert "@modelcontextprotocol/server-postgres" in postgres_config["args"]
+
+
+def test_postgres_server_disabled_without_connection() -> None:
+    """Test that PostgreSQL server is disabled when no connection string is set."""
+    import os
+    # Ensure no connection string is set
+    os.environ.pop("MCP_POSTGRES_CONNECTION", None)
+    
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    assert DEFAULT_MCP_SERVERS["postgres"]["enabled"] is False
+
+
+def test_postgres_mcp_tool_name_format() -> None:
+    """Test that PostgreSQL MCP tools would be named correctly."""
+    # PostgreSQL MCP server tools would be named mcp_postgres_<tool_name>
+    expected_tools = [
+        "mcp_postgres_query",
+        "mcp_postgres_list_tables",
+        "mcp_postgres_describe_table",
+        "mcp_postgres_read_resource",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_postgres_"), f"Tool {tool} should start with mcp_postgres_"

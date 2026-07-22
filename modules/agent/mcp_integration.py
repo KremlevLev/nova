@@ -29,6 +29,11 @@ def _get_sqlite_path() -> str:
     return os.environ.get("MCP_SQLITE_PATH", "nova_memory.db")
 
 
+def _get_postgres_connection_string() -> str:
+    """Get PostgreSQL connection string from environment."""
+    return os.environ.get("MCP_POSTGRES_CONNECTION", "")
+
+
 async def initialize_mcp_servers(
     gateway: MCPGateway,
     registry: Any,
@@ -134,6 +139,12 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "env": {},  # Will be populated from GOOGLE_DRIVE_TOKEN env var
         "enabled": False,  # Will be True if GOOGLE_DRIVE_TOKEN is available
     },
+    "postgres": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-postgres"],
+        "env": {},  # Will be populated from MCP_POSTGRES_CONNECTION env var
+        "enabled": False,  # Will be True if MCP_POSTGRES_CONNECTION is set
+    },
 }
 
 
@@ -150,10 +161,12 @@ async def bootstrap_mcp_from_defaults(
     - Slack: enabled if SLACK_TOKEN is set
     - Websearch: always enabled
     - Gdrive: enabled if GOOGLE_DRIVE_TOKEN is set
+    - Postgres: enabled if MCP_POSTGRES_CONNECTION is set
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()
     sqlite_path = _get_sqlite_path()
+    postgres_conn = _get_postgres_connection_string()
     
     for name, server_config in DEFAULT_MCP_SERVERS.items():
         # Determine if server should be enabled
@@ -168,6 +181,8 @@ async def bootstrap_mcp_from_defaults(
             should_enable = True
         elif name == "gdrive" and env_tokens.get("GOOGLE_DRIVE_TOKEN"):
             should_enable = True
+        elif name == "postgres" and postgres_conn:
+            should_enable = True
         
         if should_enable:
             # Build env dict from server config + environment tokens
@@ -178,6 +193,8 @@ async def bootstrap_mcp_from_defaults(
                 env["SLACK_TOKEN"] = env_tokens["SLACK_TOKEN"]
             if name == "gdrive" and env_tokens.get("GOOGLE_DRIVE_TOKEN"):
                 env["GOOGLE_DRIVE_TOKEN"] = env_tokens["GOOGLE_DRIVE_TOKEN"]
+            if name == "postgres" and postgres_conn:
+                env["MCP_POSTGRES_CONNECTION"] = postgres_conn
             
             # Build args for SQLite with path
             args = server_config["args"].copy()
