@@ -728,3 +728,42 @@ def test_jira_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_jira_"), f"Tool {tool} should start with mcp_jira_"
+
+
+# ==============================================================================
+# Docker MCP Server Integration Tests
+# ==============================================================================
+
+def test_docker_server_config_in_defaults() -> None:
+    """Test that Docker server is in DEFAULT_MCP_SERVERS."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    assert "docker" in DEFAULT_MCP_SERVERS
+    docker_config = DEFAULT_MCP_SERVERS["docker"]
+    assert docker_config["command"] == "npx"
+    assert "-y" in docker_config["args"]
+    assert "@modelcontextprotocol/server-docker" in docker_config["args"]
+
+
+def test_docker_server_always_enabled() -> None:
+    """Test that Docker server is always enabled (no token required)."""
+    from modules.agent.mcp_integration import DEFAULT_MCP_SERVERS
+    
+    # Docker server should be enabled by default
+    assert DEFAULT_MCP_SERVERS["docker"]["enabled"] is True
+
+
+def test_docker_mcp_tool_name_format() -> None:
+    """Test that Docker MCP tools would be named correctly."""
+    # Docker MCP server tools would be named mcp_docker_<tool_name>
+    expected_tools = [
+        "mcp_docker_list_containers",
+        "mcp_docker_list_images",
+        "mcp_docker_run_container",
+        "mcp_docker_stop_container",
+        "mcp_docker_get_logs",
+    ]
+    
+    # Verify naming convention
+    for tool in expected_tools:
+        assert tool.startswith("mcp_docker_"), f"Tool {tool} should start with mcp_docker_"

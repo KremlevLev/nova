@@ -158,6 +158,12 @@ DEFAULT_MCP_SERVERS: dict[str, dict[str, Any]] = {
         "env": {},  # Will be populated from JIRA_TOKEN env var
         "enabled": False,  # Will be True if JIRA_TOKEN is available
     },
+    "docker": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-docker"],
+        "env": {},  # No token required for local Docker operations
+        "enabled": True,  # Always enabled for Docker operations
+    },
 }
 
 
@@ -177,6 +183,7 @@ async def bootstrap_mcp_from_defaults(
     - Postgres: enabled if MCP_POSTGRES_CONNECTION is set
     - Git: always enabled
     - Jira: enabled if JIRA_TOKEN is set
+    - Docker: always enabled
     """
     gateway = MCPGateway()
     env_tokens = _get_env_tokens()
