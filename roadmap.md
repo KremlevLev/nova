@@ -150,7 +150,7 @@
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 87 mcp_gateway tests passed + все остальные
+python -m pytest tests/ -q  # 91 mcp_gateway tests passed + все остальные
 
 # КОНТЕКСТ ПРОЕКТА
 - Ты помогаешь мне развивать моего кастомного ИИ-агента.

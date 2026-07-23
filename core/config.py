@@ -347,6 +347,26 @@ High-level Windows skills:
 """
 SYSTEM_PROMPT = build_system_prompt()
 
+# MCP Auto-Discovery Configuration
+MCP_AUTO_DISCOVERY: Final[bool] = os.getenv(
+    "NOVA_MCP_AUTO_DISCOVERY",
+    "true",
+).lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+MCP_DISCOVERY_PORTS: tuple[int, ...] = tuple(
+    int(p.strip())
+    for p in _split_csv(os.getenv("NOVA_MCP_DISCOVERY_PORTS", ""))
+    if p.strip().isdigit()
+) or (
+    3000, 3001, 3002, 8000, 8001, 8080, 8081, 8082, 8083,
+    8090, 9000, 9001, 9002,
+)
+
 NOVA_DESKTOP_UI = os.getenv(
     "NOVA_DESKTOP_UI",
     "true",

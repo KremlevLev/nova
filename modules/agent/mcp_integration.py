@@ -253,7 +253,7 @@ async def bootstrap_mcp_from_defaults(
 
 async def bootstrap_mcp_with_auto_discovery(
     registry: Any,
-    auto_discover: bool = True,
+    auto_discover: bool | None = None,
     discovery_ports: list[int] | None = None,
 ) -> MCPGateway:
     """
@@ -266,12 +266,22 @@ async def bootstrap_mcp_with_auto_discovery(
     
     Args:
         registry: ToolRegistry to register tools with
-        auto_discover: If True, scan localhost for MCP SSE servers
-        discovery_ports: Optional list of ports to scan (uses defaults if None)
+        auto_discover: If True, scan localhost for MCP SSE servers.
+                      If None, uses NOVA_MCP_AUTO_DISCOVERY from config.
+        discovery_ports: Optional list of ports to scan (uses config defaults if None)
         
     Returns:
         Configured MCPGateway instance
     """
+    import core.config as config
+    
+    # Use config value if not explicitly provided
+    if auto_discover is None:
+        auto_discover = config.MCP_AUTO_DISCOVERY
+    
+    # Use config ports if not explicitly provided
+    ports = discovery_ports or list(config.MCP_DISCOVERY_PORTS)
+    
     gateway = MCPGateway()
     
     # Bootstrap default servers
@@ -328,7 +338,7 @@ async def bootstrap_mcp_with_auto_discovery(
     if auto_discover:
         from modules.agent.mcp_gateway import MCPAutoDiscovery
         
-        discovery = MCPAutoDiscovery(ports=discovery_ports)
+        discovery = MCPAutoDiscovery(ports=ports)
         try:
             discovered_servers = await discovery.discover_localhost_servers()
             

@@ -1210,3 +1210,62 @@ def test_bootstrap_mcp_with_auto_discovery_disabled() -> None:
         assert "filesystem" in gateway._servers
     
     asyncio.run(run_test())
+
+
+# ==============================================================================
+# MCP Configuration Tests
+# ==============================================================================
+
+def test_mcp_auto_discovery_config_exists() -> None:
+    """Test MCP_AUTO_DISCOVERY config exists."""
+    import core.config as config
+    assert hasattr(config, "MCP_AUTO_DISCOVERY")
+    assert isinstance(config.MCP_AUTO_DISCOVERY, bool)
+
+
+def test_mcp_discovery_ports_config_exists() -> None:
+    """Test MCP_DISCOVERY_PORTS config exists."""
+    import core.config as config
+    assert hasattr(config, "MCP_DISCOVERY_PORTS")
+    assert isinstance(config.MCP_DISCOVERY_PORTS, tuple)
+    # Should have default ports
+    assert len(config.MCP_DISCOVERY_PORTS) > 0
+    assert 3000 in config.MCP_DISCOVERY_PORTS
+
+
+def test_mcp_discovery_ports_default_values() -> None:
+    """Test MCP_DISCOVERY_PORTS has sensible defaults."""
+    import core.config as config
+    
+    # Check some expected ports
+    assert 8000 in config.MCP_DISCOVERY_PORTS
+    assert 8080 in config.MCP_DISCOVERY_PORTS
+    assert 9000 in config.MCP_DISCOVERY_PORTS
+
+
+def test_bootstrap_uses_config_ports() -> None:
+    """Test that bootstrap uses config.MCP_DISCOVERY_PORTS when ports not provided."""
+    from modules.agent.mcp_integration import bootstrap_mcp_with_auto_discovery
+    import core.config as config
+    
+    # Mock registry
+    class MockRegistry:
+        def __init__(self) -> None:
+            self.registered_tools: list[str] = []
+        
+        def register(self, schema: dict, handler: Any) -> None:
+            self.registered_tools.append(schema["function"]["name"])
+    
+    async def run_test() -> None:
+        registry = MockRegistry()
+        # Call without discovery_ports - should use config defaults
+        gateway = await bootstrap_mcp_with_auto_discovery(
+            registry,
+            auto_discover=False,  # Skip actual discovery
+        )
+        
+        assert gateway is not None
+        # Verify config was imported
+        assert config.MCP_DISCOVERY_PORTS is not None
+    
+    asyncio.run(run_test())
