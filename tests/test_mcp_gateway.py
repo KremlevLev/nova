@@ -10,6 +10,7 @@ from modules.agent.mcp_gateway import (
     MCPServerConfig,
     MCPConnectionPool,
     MCPToolCache,
+    MCPErrorMiddleware,
 )
 from modules.agent.recovery import (
     GracefulDegradation,
@@ -23,6 +24,79 @@ from modules.agent.recovery import (
     set_mcp_recovery_tools,
 )
 from modules.domain.results import ToolResult
+
+
+def test_mcp_error_middleware_creation() -> None:
+    """Test MCPErrorMiddleware can be created."""
+    middleware = MCPErrorMiddleware(max_retries=5, base_delay=2.0, max_delay=60.0)
+    assert middleware is not None
+    assert middleware._max_retries == 5
+    assert middleware._base_delay == 2.0
+    assert middleware._max_delay == 60.0
+
+
+def test_mcp_error_middleware_calculate_delay() -> None:
+    """Test exponential backoff delay calculation."""
+    middleware = MCPErrorMiddleware(base_delay=1.0, max_delay=30.0)
+    
+    # Attempt 1: 1 second
+    assert middleware.calculate_delay(1) == 1.0
+    
+    # Attempt 2: 2 seconds
+    assert middleware.calculate_delay(2) == 2.0
+    
+    # Attempt 3: 4 seconds
+    assert middleware.calculate_delay(3) == 4.0
+    
+    # Attempt 4: 8 seconds
+    assert middleware.calculate_delay(4) == 8.0
+    
+    # Attempt 5: 16 seconds
+    assert middleware.calculate_delay(5) == 16.0
+    
+    # Attempt 6: capped at 30 seconds
+    assert middleware.calculate_delay(6) == 30.0
+
+
+def test_mcp_error_middleware_should_retry() -> None:
+    """Test should_retry for different error codes."""
+    middleware = MCPErrorMiddleware()
+    
+    # Retryable errors
+    assert middleware.should_retry("MCP_TIMEOUT") is True
+    assert middleware.should_retry("MCP_CONNECTION_ERROR") is True
+    assert middleware.should_retry("MCP_TOOL_ERROR") is True
+    
+    # Non-retryable errors
+    assert middleware.should_retry("INVALID_TOOL_NAME") is False
+    assert middleware.should_retry("UNKNOWN_MCP_SERVER") is False
+    assert middleware.should_retry("MCP_CONFIG_ERROR") is False
+
+
+def test_mcp_error_middleware_error_count() -> None:
+    """Test error count tracking."""
+    middleware = MCPErrorMiddleware()
+    
+    # Initially zero
+    assert middleware.get_error_count("mcp_test_tool") == 0
+    
+    # Increment
+    middleware.increment_error("mcp_test_tool")
+    assert middleware.get_error_count("mcp_test_tool") == 1
+    
+    middleware.increment_error("mcp_test_tool")
+    assert middleware.get_error_count("mcp_test_tool") == 2
+    
+    # Reset
+    middleware.reset_error_count("mcp_test_tool")
+    assert middleware.get_error_count("mcp_test_tool") == 0
+
+
+def test_mcp_gateway_with_middleware() -> None:
+    """Test MCPGateway creates middleware."""
+    gateway = MCPGateway(max_retries=5)
+    assert gateway._middleware is not None
+    assert gateway._middleware._max_retries == 5
 
 
 def test_mcp_tool_cache_creation() -> None:

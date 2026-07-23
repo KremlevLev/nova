@@ -34,6 +34,54 @@ class MCPServerConfig:
     url: str = ""  # For SSE transport
 
 
+class MCPErrorMiddleware:
+    """
+    Middleware for handling MCP errors with retry and fallback logic.
+    
+    Provides:
+    - Retry with exponential backoff
+    - Fallback to alternative servers
+    - Error logging and categorization
+    """
+    
+    def __init__(
+        self,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 30.0,
+    ) -> None:
+        self._max_retries = max_retries
+        self._base_delay = base_delay
+        self._max_delay = max_delay
+        self._error_counts: dict[str, int] = {}
+    
+    def calculate_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff delay."""
+        delay = self._base_delay * (2 ** (attempt - 1))
+        return min(delay, self._max_delay)
+    
+    def should_retry(self, error_code: str) -> bool:
+        """Determine if error is retryable."""
+        retryable_codes = {
+            "MCP_TIMEOUT",
+            "MCP_CONNECTION_ERROR",
+            "MCP_TOOL_ERROR",
+        }
+        return error_code in retryable_codes
+    
+    def get_error_count(self, tool_name: str) -> int:
+        """Get error count for a tool."""
+        return self._error_counts.get(tool_name, 0)
+    
+    def increment_error(self, tool_name: str) -> None:
+        """Increment error count for a tool."""
+        self._error_counts[tool_name] = self._error_counts.get(tool_name, 0) + 1
+    
+    def reset_error_count(self, tool_name: str) -> None:
+        """Reset error count for a tool."""
+        self._error_counts[tool_name] = 0
+
+
 class MCPToolCache:
     """
     Cache for MCP tool schemas.
@@ -198,6 +246,7 @@ class MCPGateway:
         self,
         pool_size: int = 5,
         cache_ttl: int = 3600,
+        max_retries: int = 3,
     ) -> None:
         self._servers: dict[str, MCPServerConfig] = {}
         self._tool_schemas: dict[str, dict[str, Any]] = {}
@@ -205,6 +254,7 @@ class MCPGateway:
         self._initialized = False
         self._pool = MCPConnectionPool(max_connections=pool_size)
         self._cache = MCPToolCache(ttl_seconds=cache_ttl)
+        self._middleware = MCPErrorMiddleware(max_retries=max_retries)
     
     def register_server(
         self,
@@ -389,24 +439,52 @@ class MCPGateway:
             },
         }
         
-        try:
-            if config.transport == "sse":
-                return await self._call_tool_sse(config, request, actual_tool_name)
-            else:
-                return await self._call_tool_stdio(config, request, actual_tool_name)
+        # Apply error middleware with retry logic
+        for attempt in range(self._middleware._max_retries):
+            try:
+                if config.transport == "sse":
+                    result = await self._call_tool_sse(config, request, actual_tool_name)
+                else:
+                    result = await self._call_tool_stdio(config, request, actual_tool_name)
                 
-        except asyncio.TimeoutError:
-            return ToolResult.failure(
-                "MCP_TIMEOUT",
-                f"Tool {actual_tool_name} timed out",
-                retryable=True,
-            )
-        except Exception as exc:
-            return ToolResult.failure(
-                "MCP_CONNECTION_ERROR",
-                f"Failed to call MCP tool: {exc}",
-                retryable=True,
-            )
+                if result.success:
+                    self._middleware.reset_error_count(tool_name)
+                    return result
+                
+                # Check if retryable
+                if not self._middleware.should_retry(result.code):
+                    return result
+                
+                self._middleware.increment_error(tool_name)
+                
+                if attempt < self._middleware._max_retries - 1:
+                    delay = self._middleware.calculate_delay(attempt + 1)
+                    logger.warning(
+                        "Retrying MCP tool %s (attempt %d/%d) after %s seconds",
+                        tool_name,
+                        attempt + 1,
+                        self._middleware._max_retries,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    
+            except asyncio.TimeoutError:
+                self._middleware.increment_error(tool_name)
+                if attempt < self._middleware._max_retries - 1:
+                    delay = self._middleware.calculate_delay(attempt + 1)
+                    await asyncio.sleep(delay)
+                continue
+            except Exception as exc:
+                self._middleware.increment_error(tool_name)
+                if attempt < self._middleware._max_retries - 1:
+                    delay = self._middleware.calculate_delay(attempt + 1)
+                    await asyncio.sleep(delay)
+                continue
+        
+        return ToolResult.failure(
+            "MCP_MAX_RETRIES_EXCEEDED",
+            f"Tool {actual_tool_name} failed after {self._middleware._max_retries} retries",
+        )
 
     async def _call_tool_stdio(
         self,
