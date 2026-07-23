@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from modules.domain.results import ToolResult
-from modules.tools.base import ToolCategory, RiskLevel
 
 logger = logging.getLogger("MCPGateway")
 
@@ -34,6 +33,120 @@ class MCPServerConfig:
     url: str = ""  # For SSE transport
 
 
+class MCPConnectionPool:
+    """
+    Pool for reusing MCP server processes.
+    
+    Maintains a pool of active subprocess connections for stdio transports
+    to avoid process spawn overhead on each tool call.
+    """
+    
+    def __init__(self, max_connections: int = 5) -> None:
+        self._max_connections = max_connections
+        self._processes: dict[str, asyncio.subprocess.Process] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+    
+    async def get_process(
+        self,
+        config: MCPServerConfig,
+    ) -> asyncio.subprocess.Process | None:
+        """
+        Get or create a process for the given server config.
+        
+        Returns None if process is not available or failed.
+        """
+        if config.transport != "stdio":
+            return None
+        
+        name = config.name
+        
+        # Check if process exists and is running
+        if name in self._processes:
+            process = self._processes[name]
+            if process.returncode is None:
+                return process
+        
+        # Create new process
+        try:
+            process = await asyncio.create_subprocess_exec(
+                config.command,
+                *config.args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**asyncio.get_event_loop().run_in_executor(None, lambda: __import__('os').environ), **config.env},
+            )
+            self._processes[name] = process
+            self._locks[name] = asyncio.Lock()
+            return process
+        except Exception as exc:
+            logger.warning(
+                "Failed to create MCP process pool entry for %s: %s",
+                name,
+                exc,
+            )
+            return None
+    
+    async def call_tool_via_pool(
+        self,
+        config: MCPServerConfig,
+        request: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> tuple[dict[str, Any], str]:
+        """
+        Call a tool using pooled process.
+        
+        Returns (response_dict, stderr_output).
+        """
+        name = config.name
+        
+        # Get lock for this server
+        lock = self._locks.get(name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[name] = lock
+        
+        async with lock:
+            process = await self.get_process(config)
+            if process is None:
+                raise RuntimeError(f"Cannot get process for MCP server {name}")
+            
+            # For pooled processes, we need to manage stdin/stdout carefully
+            # Each request-response is a single call on the same process
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(
+                        input=json.dumps(request).encode(),
+                    ),
+                    timeout=timeout,
+                )
+                
+                response = json.loads(stdout.decode())
+                return response, stderr.decode()
+                
+            except asyncio.TimeoutError:
+                # Terminate stuck process
+                process.kill()
+                del self._processes[name]
+                raise
+            except json.JSONDecodeError:
+                # Invalid response - recreate process
+                process.kill()
+                del self._processes[name]
+                raise
+    
+    def close(self) -> None:
+        """Close all pooled processes."""
+        for name, process in list(self._processes.items()):
+            if process is not None:
+                try:
+                    process.terminate()
+                except (ProcessLookupError, AttributeError):
+                    pass
+        self._processes.clear()
+        self._locks.clear()
+
+
 class MCPGateway:
     """
     Gateway for connecting to MCP servers.
@@ -42,12 +155,13 @@ class MCPGateway:
     Discovers tools and provides them for recovery operations.
     """
     
-    def __init__(self) -> None:
+    def __init__(self, pool_size: int = 5) -> None:
         self._servers: dict[str, MCPServerConfig] = {}
         self._tool_schemas: dict[str, dict[str, Any]] = {}
         self._handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
-
+        self._pool = MCPConnectionPool(max_connections=pool_size)
+    
     def register_server(
         self,
         config: MCPServerConfig,
@@ -55,7 +169,7 @@ class MCPGateway:
         """Register an MCP server configuration."""
         self._servers[config.name] = config
         logger.info("Registered MCP server: %s", config.name)
-
+    
     async def initialize(self) -> ToolResult:
         """Initialize all registered MCP servers and discover tools."""
         if self._initialized:

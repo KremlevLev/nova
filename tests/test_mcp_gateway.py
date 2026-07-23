@@ -7,6 +7,7 @@ import asyncio
 from modules.agent.mcp_gateway import (
     MCPGateway,
     MCPServerConfig,
+    MCPConnectionPool,
 )
 from modules.agent.recovery import (
     GracefulDegradation,
@@ -20,6 +21,47 @@ from modules.agent.recovery import (
     set_mcp_recovery_tools,
 )
 from modules.domain.results import ToolResult
+
+
+def test_mcp_connection_pool_creation() -> None:
+    """Test MCPConnectionPool can be created."""
+    pool = MCPConnectionPool(max_connections=10)
+    assert pool is not None
+    assert pool._max_connections == 10
+
+
+def test_mcp_connection_pool_returns_none_for_sse() -> None:
+    """Test MCPConnectionPool returns None for SSE transport."""
+    
+    async def run_test() -> None:
+        pool = MCPConnectionPool()
+        config = MCPServerConfig(
+            name="sse_server",
+            command="node",
+            transport="sse",
+            url="https://api.example.com/mcp",
+        )
+        
+        result = await pool.get_process(config)
+        assert result is None
+    
+    asyncio.run(run_test())
+
+
+def test_mcp_connection_pool_close() -> None:
+    """Test MCPConnectionPool close clears all processes."""
+    pool = MCPConnectionPool()
+    pool._processes["test"] = None  # type: ignore
+    pool.close()
+    assert len(pool._processes) == 0
+    assert len(pool._locks) == 0
+
+
+def test_mcp_gateway_with_pool() -> None:
+    """Test MCPGateway creates pool."""
+    gateway = MCPGateway(pool_size=10)
+    assert gateway._pool is not None
+    assert gateway._pool._max_connections == 10
 
 
 def test_mcp_recovery_tools_setter() -> None:
