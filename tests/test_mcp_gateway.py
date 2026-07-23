@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 from modules.agent.mcp_gateway import (
     MCPGateway,
@@ -1036,3 +1037,176 @@ def test_docker_mcp_tool_name_format() -> None:
     # Verify naming convention
     for tool in expected_tools:
         assert tool.startswith("mcp_docker_"), f"Tool {tool} should start with mcp_docker_"
+
+
+# ==============================================================================
+# MCP Auto-Discovery Tests
+# ==============================================================================
+
+def test_mcp_auto_discovery_creation() -> None:
+    """Test MCPAutoDiscovery can be created."""
+    from modules.agent.mcp_gateway import MCPAutoDiscovery
+    
+    discovery = MCPAutoDiscovery()
+    assert discovery is not None
+    assert discovery._ports == MCPAutoDiscovery.DEFAULT_PORTS
+    assert discovery._timeout == 2.0
+    assert discovery._max_concurrent == 10
+
+
+def test_mcp_auto_discovery_custom_ports() -> None:
+    """Test MCPAutoDiscovery can be created with custom ports."""
+    from modules.agent.mcp_gateway import MCPAutoDiscovery
+    
+    discovery = MCPAutoDiscovery(ports=[3000, 8000, 9000], timeout=5.0, max_concurrent=5)
+    assert discovery._ports == [3000, 8000, 9000]
+    assert discovery._timeout == 5.0
+    assert discovery._max_concurrent == 5
+
+
+def test_mcp_discovery_result_creation() -> None:
+    """Test MCPDiscoveryResult can be created."""
+    from modules.agent.mcp_gateway import MCPDiscoveryResult
+    
+    result = MCPDiscoveryResult(
+        name="test_server",
+        url="http://localhost:3000/mcp",
+        available=True,
+        tools=[{"name": "test_tool"}],
+    )
+    
+    assert result.name == "test_server"
+    assert result.url == "http://localhost:3000/mcp"
+    assert result.available is True
+    assert len(result.tools) == 1
+
+
+def test_mcp_discovery_result_unavailable() -> None:
+    """Test MCPDiscoveryResult for unavailable server."""
+    from modules.agent.mcp_gateway import MCPDiscoveryResult
+    
+    result = MCPDiscoveryResult(
+        name="closed_port",
+        url="http://localhost:9999",
+        available=False,
+        error="Port not open",
+    )
+    
+    assert result.available is False
+    assert result.error == "Port not open"
+
+
+def test_mcp_auto_discovery_default_ports() -> None:
+    """Test MCPAutoDiscovery has sensible default ports."""
+    from modules.agent.mcp_gateway import MCPAutoDiscovery
+    
+    assert 3000 in MCPAutoDiscovery.DEFAULT_PORTS
+    assert 8000 in MCPAutoDiscovery.DEFAULT_PORTS
+    assert 8080 in MCPAutoDiscovery.DEFAULT_PORTS
+    assert len(MCPAutoDiscovery.DEFAULT_PORTS) > 0
+
+
+def test_mcp_auto_discovery_endpoint_paths() -> None:
+    """Test MCPAutoDiscovery has default endpoint paths."""
+    from modules.agent.mcp_gateway import MCPAutoDiscovery
+    
+    assert "/mcp" in MCPAutoDiscovery.MCP_ENDPOINT_PATHS
+    assert "/sse" in MCPAutoDiscovery.MCP_ENDPOINT_PATHS
+
+
+def test_mcp_auto_discovery_empty_discovery() -> None:
+    """Test MCPAutoDiscovery returns empty list for closed ports."""
+    from modules.agent.mcp_gateway import MCPAutoDiscovery
+    
+    async def run_test() -> None:
+        discovery = MCPAutoDiscovery(ports=[9999, 9998, 9997], timeout=0.5)
+        results = await discovery.discover_localhost_servers()
+        
+        # No MCP servers on these ports, should return empty
+        assert results == []
+    
+    asyncio.run(run_test())
+
+
+def test_mcp_auto_discovery_create_server_configs() -> None:
+    """Test MCPAutoDiscovery creates server configs from discovery results."""
+    from modules.agent.mcp_gateway import MCPAutoDiscovery, MCPDiscoveryResult
+    
+    discovery = MCPAutoDiscovery()
+    
+    results = [
+        MCPDiscoveryResult(
+            name="mcp_port_3000",
+            url="http://localhost:3000/mcp",
+            available=True,
+            tools=[{"name": "test"}],
+        ),
+        MCPDiscoveryResult(
+            name="mcp_port_8000",
+            url="http://localhost:8000/sse",
+            available=True,
+            tools=[],
+        ),
+    ]
+    
+    configs = discovery.create_server_configs_from_discovery(results)
+    
+    assert len(configs) == 2
+    assert configs[0].name == "mcp_port_3000"
+    assert configs[0].transport == "sse"
+    assert configs[0].url == "http://localhost:3000/mcp"
+    assert configs[1].name == "mcp_port_8000"
+    assert configs[1].transport == "sse"
+
+
+def test_mcp_auto_discovery_gw_integration() -> None:
+    """Test MCP AutoDiscovery integrates with MCPGateway."""
+    from modules.agent.mcp_gateway import MCPGateway, MCPAutoDiscovery, MCPDiscoveryResult
+    
+    async def run_test() -> None:
+        gateway = MCPGateway()
+        discovery = MCPAutoDiscovery(ports=[9999], timeout=0.5)
+        
+        # Test empty discovery doesn't crash the gateway
+        results = await discovery.discover_localhost_servers()
+        configs = discovery.create_server_configs_from_discovery(results)
+        
+        for config in configs:
+            gateway.register_server(config)
+        
+        assert gateway._servers == {}
+    
+    asyncio.run(run_test())
+
+
+def test_bootstrap_mcp_with_auto_discovery_function_exists() -> None:
+    """Test bootstrap_mcp_with_auto_discovery function exists."""
+    from modules.agent.mcp_integration import bootstrap_mcp_with_auto_discovery
+    assert bootstrap_mcp_with_auto_discovery is not None
+
+
+def test_bootstrap_mcp_with_auto_discovery_disabled() -> None:
+    """Test bootstrap_mcp_with_auto_discovery with auto_discover=False."""
+    from modules.agent.mcp_integration import bootstrap_mcp_with_auto_discovery
+    
+    # Mock registry
+    class MockRegistry:
+        def __init__(self) -> None:
+            self.registered_tools: list[str] = []
+        
+        def register(self, schema: dict, handler: Any) -> None:
+            self.registered_tools.append(schema["function"]["name"])
+    
+    async def run_test() -> None:
+        registry = MockRegistry()
+        gateway = await bootstrap_mcp_with_auto_discovery(
+            registry,
+            auto_discover=False,
+            discovery_ports=[9999],  # Won't be used since auto_discover=False
+        )
+        
+        assert gateway is not None
+        # Should have at least filesystem and git enabled by default
+        assert "filesystem" in gateway._servers
+    
+    asyncio.run(run_test())

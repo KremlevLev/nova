@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -20,6 +21,187 @@ from typing import Any, Callable
 from modules.domain.results import ToolResult
 
 logger = logging.getLogger("MCPGateway")
+
+
+@dataclass(slots=True)
+class MCPDiscoveryResult:
+    """Result of MCP server discovery probe."""
+    name: str
+    url: str
+    available: bool
+    tools: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
+
+
+class MCPAutoDiscovery:
+    """
+    Automatic discovery of localhost MCP servers.
+    
+    Scans common MCP ports for SSE servers and probes endpoints
+    to detect MCP-compatible servers.
+    """
+    
+    # Common MCP/SSE ports
+    DEFAULT_PORTS = [3000, 3001, 3002, 8000, 8001, 8080, 8081, 8082, 9000, 9001]
+    MCP_ENDPOINT_PATHS = ["/mcp", "/sse", "/api/mcp", "/tools"]
+    
+    def __init__(
+        self,
+        ports: list[int] | None = None,
+        timeout: float = 2.0,
+        max_concurrent: int = 10,
+    ) -> None:
+        self._ports = ports or self.DEFAULT_PORTS
+        self._timeout = timeout
+        self._max_concurrent = max_concurrent
+    
+    async def discover_localhost_servers(
+        self,
+        ports: list[int] | None = None,
+    ) -> list[MCPDiscoveryResult]:
+        """
+        Discover MCP servers running on localhost.
+        
+        Args:
+            ports: Optional list of ports to scan. Uses default ports if not provided.
+            
+        Returns:
+            List of discovery results for each port checked.
+        """
+        scan_ports = ports or self._ports
+        results = []
+        
+        # Create semaphore for concurrent connections
+        semaphore = asyncio.Semaphore(self._max_concurrent)
+        
+        async def probe_port(port: int) -> MCPDiscoveryResult:
+            async with semaphore:
+                return await self._probe_port(port)
+        
+        # Probe all ports concurrently
+        tasks = [probe_port(port) for port in scan_ports]
+        results = await asyncio.gather(*tasks)
+        
+        return [r for r in results if r.available]
+    
+    async def _probe_port(self, port: int) -> MCPDiscoveryResult:
+        """Probe a single port for MCP servers."""
+        # First check if port is open
+        if not await self._is_port_open(port):
+            return MCPDiscoveryResult(
+                name=f"port_{port}",
+                url=f"http://localhost:{port}",
+                available=False,
+                error="Port not open",
+            )
+        
+        # Try MCP endpoints
+        for path in self.MCP_ENDPOINT_PATHS:
+            result = await self._probe_mcp_endpoint(port, path)
+            if result.available:
+                return result
+        
+        return MCPDiscoveryResult(
+            name=f"port_{port}",
+            url=f"http://localhost:{port}",
+            available=False,
+            error="No MCP endpoint found",
+        )
+    
+    async def _is_port_open(self, port: int) -> bool:
+        """Check if a port is open on localhost."""
+        try:
+            # Use asyncio for non-blocking socket check
+            loop = asyncio.get_event_loop()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._timeout)
+            
+            result = await loop.run_in_executor(
+                None,
+                lambda: sock.connect_ex(('localhost', port)) == 0,
+            )
+            sock.close()
+            return result
+        except Exception:
+            return False
+    
+    async def _probe_mcp_endpoint(
+        self,
+        port: int,
+        path: str,
+    ) -> MCPDiscoveryResult:
+        """Probe an MCP endpoint for compatibility."""
+        try:
+            import aiohttp
+            
+            url = f"http://localhost:{port}{path}"
+            
+            async with aiohttp.ClientSession() as session:
+                # Send tools/list request to check MCP compatibility
+                request = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                }
+                
+                try:
+                    async with session.post(
+                        url,
+                        json=request,
+                        timeout=aiohttp.ClientTimeout(total=self._timeout),
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            # Check if response looks like MCP tools/list response
+                            if "tools" in data or "result" in data:
+                                tools = data.get("tools", data.get("result", {}).get("tools", []))
+                                return MCPDiscoveryResult(
+                                    name=f"mcp_port_{port}",
+                                    url=url,
+                                    available=True,
+                                    tools=tools,
+                                )
+                except (asyncio.TimeoutError, aiohttp.ClientError):
+                    pass
+                    
+        except ImportError:
+            logger.warning("aiohttp required for auto-discovery: pip install aiohttp")
+        except Exception as exc:
+            pass
+        
+        return MCPDiscoveryResult(
+            name=f"port_{port}",
+            url=f"http://localhost:{port}",
+            available=False,
+            error="Not MCP-compatible",
+        )
+    
+    def create_server_configs_from_discovery(
+        self,
+        discovery_results: list[MCPDiscoveryResult],
+    ) -> list[MCPServerConfig]:
+        """
+        Create MCPServerConfig objects from discovery results.
+        
+        Args:
+            discovery_results: Results from discover_localhost_servers()
+            
+        Returns:
+            List of MCPServerConfig objects for discovered servers.
+        """
+        configs = []
+        for result in discovery_results:
+            config = MCPServerConfig(
+                name=result.name,
+                command="npx",  # Placeholder, actual SSE URL used
+                transport="sse",
+                url=result.url,
+                enabled=True,
+            )
+            configs.append(config)
+        
+        return configs
 
 
 @dataclass(slots=True)

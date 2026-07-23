@@ -249,3 +249,115 @@ async def bootstrap_mcp_from_defaults(
     await gateway.register_with_registry(registry)
     
     return gateway
+
+
+async def bootstrap_mcp_with_auto_discovery(
+    registry: Any,
+    auto_discover: bool = True,
+    discovery_ports: list[int] | None = None,
+) -> MCPGateway:
+    """
+    Bootstrap MCP with default servers and auto-discovery of localhost servers.
+    
+    This function:
+    1. Bootsraps default MCP servers based on environment tokens
+    2. Optionally discovers MCP servers running on localhost via SSE
+    3. Registers all discovered tools with the registry
+    
+    Args:
+        registry: ToolRegistry to register tools with
+        auto_discover: If True, scan localhost for MCP SSE servers
+        discovery_ports: Optional list of ports to scan (uses defaults if None)
+        
+    Returns:
+        Configured MCPGateway instance
+    """
+    gateway = MCPGateway()
+    
+    # Bootstrap default servers
+    env_tokens = _get_env_tokens()
+    sqlite_path = _get_sqlite_path()
+    postgres_conn = _get_postgres_connection_string()
+    
+    for name, server_config in DEFAULT_MCP_SERVERS.items():
+        should_enable = server_config.get("enabled", False)
+        
+        if name == "github" and env_tokens.get("GITHUB_TOKEN"):
+            should_enable = True
+        elif name == "slack" and env_tokens.get("SLACK_TOKEN"):
+            should_enable = True
+        elif name == "sqlite" and os.environ.get("MCP_SQLITE_PATH"):
+            should_enable = True
+        elif name == "gdrive" and env_tokens.get("GOOGLE_DRIVE_TOKEN"):
+            should_enable = True
+        elif name == "postgres" and postgres_conn:
+            should_enable = True
+        elif name == "jira" and env_tokens.get("JIRA_TOKEN"):
+            should_enable = True
+        
+        if should_enable:
+            env = {}
+            if name == "github" and env_tokens.get("GITHUB_TOKEN"):
+                env["GITHUB_TOKEN"] = env_tokens["GITHUB_TOKEN"]
+            if name == "slack" and env_tokens.get("SLACK_TOKEN"):
+                env["SLACK_TOKEN"] = env_tokens["SLACK_TOKEN"]
+            if name == "gdrive" and env_tokens.get("GOOGLE_DRIVE_TOKEN"):
+                env["GOOGLE_DRIVE_TOKEN"] = env_tokens["GOOGLE_DRIVE_TOKEN"]
+            if name == "postgres" and postgres_conn:
+                env["MCP_POSTGRES_CONNECTION"] = postgres_conn
+            if name == "jira" and env_tokens.get("JIRA_TOKEN"):
+                env["JIRA_TOKEN"] = env_tokens["JIRA_TOKEN"]
+            
+            args = server_config["args"].copy()
+            if name == "sqlite" and os.environ.get("MCP_SQLITE_PATH"):
+                args.extend(["--db-path", sqlite_path])
+            
+            env.update(server_config.get("env", {}))
+            
+            config_obj = MCPServerConfig(
+                name=name,
+                command=server_config["command"],
+                args=args,
+                env=env,
+                enabled=True,
+            )
+            gateway.register_server(config_obj)
+            logger.info("MCP server '%s' enabled via bootstrap", name)
+    
+    # Auto-discover localhost MCP servers (SSE transport)
+    if auto_discover:
+        from modules.agent.mcp_gateway import MCPAutoDiscovery
+        
+        discovery = MCPAutoDiscovery(ports=discovery_ports)
+        try:
+            discovered_servers = await discovery.discover_localhost_servers()
+            
+            for server in discovered_servers:
+                # Create unique name if conflict exists
+                server_name = server.name
+                original_name = server_name
+                counter = 1
+                while server_name in gateway._servers:
+                    server_name = f"{original_name}_{counter}"
+                    counter += 1
+                
+                config = MCPServerConfig(
+                    name=server_name,
+                    command="npx",  # Placeholder for SSE transport
+                    transport="sse",
+                    url=server.url,
+                    enabled=True,
+                )
+                gateway.register_server(config)
+                logger.info(
+                    "Auto-discovered MCP server at %s with %d tools",
+                    server.url,
+                    len(server.tools),
+                )
+        except Exception as exc:
+            logger.warning("Auto-discovery of localhost MCP servers failed: %s", exc)
+    
+    await gateway.initialize()
+    await gateway.register_with_registry(registry)
+    
+    return gateway
