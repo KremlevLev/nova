@@ -42,7 +42,10 @@ from modules.brain.tool_calls import (
 )
 from modules.domain.results import AssistantResponse
 from modules.tools.runtime import ToolRegistry, ToolRunner
-from modules.tools.selection import select_tool_names
+from modules.tools.selection import (
+    get_tool_schemas_for_request,
+    get_selected_tool_names,
+)
 
 
 logger = logging.getLogger("AgentService")
@@ -656,9 +659,9 @@ class AgentService:
                 execution_decision.required_tools
             )
             if execution_decision.required_tools
-            else select_tool_names(
+            else get_selected_tool_names(
                 user_text,
-                has_image=has_image,
+                self.registry.names,
             )
         )
 
