@@ -26,6 +26,21 @@ from modules.agent.recovery import (
 from modules.domain.results import ToolResult
 
 
+def test_mcp_server_config_timeout_params() -> None:
+    """Test MCPServerConfig timeout parameters."""
+    config = MCPServerConfig(
+        name="test_server",
+        command="node",
+        timeout=60.0,
+        retry_count=5,
+        retry_delay=2.0,
+    )
+    
+    assert config.timeout == 60.0
+    assert config.retry_count == 5
+    assert config.retry_delay == 2.0
+
+
 def test_mcp_error_middleware_creation() -> None:
     """Test MCPErrorMiddleware can be created."""
     middleware = MCPErrorMiddleware(max_retries=5, base_delay=2.0, max_delay=60.0)

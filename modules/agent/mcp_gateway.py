@@ -32,6 +32,9 @@ class MCPServerConfig:
     enabled: bool = True
     transport: str = "stdio"  # stdio or sse
     url: str = ""  # For SSE transport
+    timeout: float = 30.0  # Request timeout in seconds
+    retry_count: int = 3  # Number of retry attempts
+    retry_delay: float = 1.0  # Base retry delay in seconds
 
 
 class MCPErrorMiddleware:
