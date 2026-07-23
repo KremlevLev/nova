@@ -1004,4 +1004,17 @@ class ToolRunner:
             result.duration_ms,
         )
 
+        # Record to ledger
+        from modules.domain.ledger import get_ledger
+        
+        if result.success:
+            get_ledger().record(
+                tool_name=definition.name,
+                arguments=arguments,
+                result=result.to_dict(),
+                session_id=actual_context.session_id,
+                turn_id=actual_context.turn_id,
+                rollback_info=definition.rollback_info,
+            )
+        
         return result
