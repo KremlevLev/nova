@@ -33,6 +33,7 @@
 - [x] **SSE транспорт в MCPGateway**: поддержка удаленных MCP серверов через HTTP
 - [x] **MCP-пул соединений**: переиспользование процессов для stdio транспорта
 - [x] **MCP tools caching**: кеширование схем инструментов с TTL
+- [x] **MCP error handling middleware**: retry с exponential backoff
 
 ## Текущие задачи
 
@@ -108,7 +109,7 @@
 - ✅ **Self-diagnostics**: `SelfDiagnostics` класс для диагностики агента (database, storage, memory, filesystem, process_manager, model_gateway, mcp_servers)
 - ✅ Создан modules/agent/mcp_gateway.py
 - ✅ Созданы SelfDiagnostics и GracefulDegradation в modules/agent/recovery.py
-- ✅ Написаны тесты tests/test_mcp_gateway.py (70 passed)
+- ✅ Написаны тесты tests/test_mcp_gateway.py (75 passed)
 
 ## MCP Integration Roadmap
 
@@ -143,15 +144,14 @@
 - [x] SSE транспорт в MCPGateway (для удаленных серверов)
 - [x] MCP-пул соединений для переиспользования процессов
 - [x] MCP tools caching (кеширование схем инструментов)
+- [x] MCP error handling middleware
 - [ ] Автоматическое обнаружение и подключение к localhost MCP серверам
 - [ ] MCP-конфигурация в .env или config.json
-- [ ] MCP error handling middleware
-- [ ] MCP timeout и retry политики
-- [ ] Логирование MCP tool calls
+- [x] MCP timeout и retry политики (timeout, retry_count, retry_delay в MCPServerConfig)
 
 ## Тесты
 ```bash
-python -m pytest tests/ -q  # 70 mcp_gateway tests passed + все остальные
+python -m pytest tests/ -q  # 75 mcp_gateway tests passed + все остальные
 
 # КОНТЕКСТ ПРОЕКТА
 - Ты помогаешь мне развивать моего кастомного ИИ-агента.
