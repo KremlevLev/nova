@@ -54,6 +54,23 @@ def test_mcp_server_config_creation() -> None:
     assert config.transport == "stdio"
 
 
+def test_mcp_server_config_sse() -> None:
+    """Test MCPServerConfig can be created with SSE transport."""
+    config = MCPServerConfig(
+        name="sse_server",
+        command="node",
+        args=["-y", "@modelcontextprotocol/server-remote"],
+        env={},
+        enabled=True,
+        transport="sse",
+        url="https://api.example.com/mcp",
+    )
+    
+    assert config.name == "sse_server"
+    assert config.transport == "sse"
+    assert config.url == "https://api.example.com/mcp"
+
+
 def test_mcp_gateway_creation() -> None:
     """Test MCPGateway can be instantiated."""
     gateway = MCPGateway()
@@ -301,6 +318,45 @@ def test_mcp_gateway_call_tool_unknown_server() -> None:
         assert result.code == "UNKNOWN_MCP_SERVER"
     
     asyncio.run(run_test())
+
+
+def test_mcp_gateway_sse_config_without_url() -> None:
+    """Test MCPGateway rejects SSE config without URL."""
+    
+    async def run_test() -> None:
+        gateway = MCPGateway()
+        config = MCPServerConfig(
+            name="test_sse",
+            command="node",
+            transport="sse",
+            # No URL provided
+        )
+        gateway.register_server(config)
+        
+        # Should raise error when trying to discover tools
+        try:
+            await gateway._discover_tools_sse(
+                config,
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            )
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "url" in str(e).lower()
+    
+    asyncio.run(run_test())
+
+
+def test_mcp_gateway_stdio_config() -> None:
+    """Test MCPGateway stdio config is valid."""
+    config = MCPServerConfig(
+        name="test_stdio",
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-test"],
+        transport="stdio",
+    )
+    
+    assert config.transport == "stdio"
+    assert config.url == ""
 
 
 # ==============================================================================
