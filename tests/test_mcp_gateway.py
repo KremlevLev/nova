@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from modules.agent.mcp_gateway import (
     MCPGateway,
     MCPServerConfig,
     MCPConnectionPool,
+    MCPToolCache,
 )
 from modules.agent.recovery import (
     GracefulDegradation,
@@ -21,6 +23,73 @@ from modules.agent.recovery import (
     set_mcp_recovery_tools,
 )
 from modules.domain.results import ToolResult
+
+
+def test_mcp_tool_cache_creation() -> None:
+    """Test MCPToolCache can be created."""
+    cache = MCPToolCache(ttl_seconds=1800)
+    assert cache is not None
+    assert cache._ttl_seconds == 1800
+
+
+def test_mcp_tool_cache_set_and_get() -> None:
+    """Test MCPToolCache set and get."""
+    cache = MCPToolCache()
+    schema = {"name": "test_tool", "description": "A test tool"}
+    
+    cache.set("mcp_test_tool", schema)
+    
+    result = cache.get("mcp_test_tool")
+    assert result == schema
+
+
+def test_mcp_tool_cache_get_nonexistent() -> None:
+    """Test MCPToolCache get returns None for missing key."""
+    cache = MCPToolCache()
+    
+    result = cache.get("nonexistent_tool")
+    assert result is None
+
+
+def test_mcp_tool_cache_ttl_expiration() -> None:
+    """Test MCPToolCache TTL expiration."""
+    cache = MCPToolCache(ttl_seconds=1)  # 1 second TTL
+    schema = {"name": "test_tool", "description": "A test tool"}
+    
+    cache.set("mcp_test_tool", schema)
+    
+    # Should be present immediately
+    assert cache.get("mcp_test_tool") == schema
+    
+    # Wait for expiration
+    time.sleep(1.1)
+    
+    # Should be expired
+    result = cache.get("mcp_test_tool")
+    assert result is None
+
+
+def test_mcp_tool_cache_clear() -> None:
+    """Test MCPToolCache clear."""
+    cache = MCPToolCache()
+    cache.set("mcp_tool1", {"name": "tool1"})
+    cache.set("mcp_tool2", {"name": "tool2"})
+    
+    cache.clear()
+    
+    assert len(cache.get_tool_names()) == 0
+
+
+def test_mcp_tool_cache_get_tool_names() -> None:
+    """Test MCPToolCache get_tool_names."""
+    cache = MCPToolCache()
+    cache.set("mcp_tool1", {"name": "tool1"})
+    cache.set("mcp_tool2", {"name": "tool2"})
+    
+    names = cache.get_tool_names()
+    
+    assert "mcp_tool1" in names
+    assert "mcp_tool2" in names
 
 
 def test_mcp_connection_pool_creation() -> None:
@@ -55,6 +124,13 @@ def test_mcp_connection_pool_close() -> None:
     pool.close()
     assert len(pool._processes) == 0
     assert len(pool._locks) == 0
+
+
+def test_mcp_gateway_with_cache() -> None:
+    """Test MCPGateway creates cache."""
+    gateway = MCPGateway(cache_ttl=7200)
+    assert gateway._cache is not None
+    assert gateway._cache._ttl_seconds == 7200
 
 
 def test_mcp_gateway_with_pool() -> None:
@@ -144,6 +220,12 @@ def test_mcp_gateway_get_available_tools_empty() -> None:
     gateway = MCPGateway()
     tools = gateway.get_available_tools()
     assert tools == set()
+
+
+def test_mcp_gateway_cached_tool_schema() -> None:
+    """Test MCPGateway cached tool schema functionality."""
+    gateway = MCPGateway()
+    assert gateway.get_cached_tool_schema("nonexistent") is None
 
 
 def test_recovery_engine_exists() -> None:

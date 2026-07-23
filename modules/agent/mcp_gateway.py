@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -31,6 +32,44 @@ class MCPServerConfig:
     enabled: bool = True
     transport: str = "stdio"  # stdio or sse
     url: str = ""  # For SSE transport
+
+
+class MCPToolCache:
+    """
+    Cache for MCP tool schemas.
+    
+    Caches tool schemas to avoid repeated discovery calls.
+    Supports TTL-based expiration for stale cache entries.
+    """
+    
+    def __init__(self, ttl_seconds: int = 3600) -> None:
+        self._cache: dict[str, tuple[dict[str, Any], float]] = {}
+        self._ttl_seconds = ttl_seconds
+    
+    def get(self, tool_name: str) -> dict[str, Any] | None:
+        """Get cached tool schema if not expired."""
+        entry = self._cache.get(tool_name)
+        if entry is None:
+            return None
+        
+        schema, timestamp = entry
+        if time.time() - timestamp > self._ttl_seconds:
+            del self._cache[tool_name]
+            return None
+        
+        return schema
+    
+    def set(self, tool_name: str, schema: dict[str, Any]) -> None:
+        """Cache a tool schema."""
+        self._cache[tool_name] = (schema, time.time())
+    
+    def clear(self) -> None:
+        """Clear all cached schemas."""
+        self._cache.clear()
+    
+    def get_tool_names(self) -> set[str]:
+        """Get set of cached tool names."""
+        return set(self._cache.keys())
 
 
 class MCPConnectionPool:
@@ -155,12 +194,17 @@ class MCPGateway:
     Discovers tools and provides them for recovery operations.
     """
     
-    def __init__(self, pool_size: int = 5) -> None:
+    def __init__(
+        self,
+        pool_size: int = 5,
+        cache_ttl: int = 3600,
+    ) -> None:
         self._servers: dict[str, MCPServerConfig] = {}
         self._tool_schemas: dict[str, dict[str, Any]] = {}
         self._handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
         self._pool = MCPConnectionPool(max_connections=pool_size)
+        self._cache = MCPToolCache(ttl_seconds=cache_ttl)
     
     def register_server(
         self,
@@ -182,6 +226,8 @@ class MCPGateway:
                     for tool in tools:
                         tool_name = f"mcp_{name}_{tool.get('name', 'unknown')}"
                         self._tool_schemas[tool_name] = tool
+                        # Also cache the schema
+                        self._cache.set(tool_name, tool)
                     logger.info(
                         "Discovered %d tools from MCP server: %s",
                         len(tools),
@@ -449,6 +495,10 @@ class MCPGateway:
                 },
             })
         return schemas
+
+    def get_cached_tool_schema(self, tool_name: str) -> dict[str, Any] | None:
+        """Get cached tool schema if available."""
+        return self._cache.get(tool_name)
 
     def get_available_tools(self) -> set[str]:
         """Get set of available MCP tool names."""
